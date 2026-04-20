@@ -14,6 +14,13 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
+// ContextAware can be implemented by tool input types to receive the request
+// context. When a tool input type implements this interface, GenToolHandler
+// calls SetContext with the incoming context before invoking the operation.
+type ContextAware interface {
+	SetContext(context.Context)
+}
+
 // GenToolHandler creates a typed MCP tool handler that deserializes JSON input
 // into T, calls op, and returns the written output as text content.
 func GenToolHandler[T any](
@@ -22,14 +29,21 @@ func GenToolHandler[T any](
 	return func(
 		ctx context.Context, req *mcp.CallToolRequest, input T,
 	) (*mcp.CallToolResult, any, error) {
-		logger := slog.New(
-			mcp.NewLoggingHandler(
-				req.Session,
-				&mcp.LoggingHandlerOptions{
-					LoggerName: toolName, MinInterval: time.Second,
-				},
-			),
-		)
+		var logger *slog.Logger
+		if req.Session != nil {
+			logger = slog.New(
+				mcp.NewLoggingHandler(
+					req.Session,
+					&mcp.LoggingHandlerOptions{
+						LoggerName: toolName, MinInterval: time.Second,
+					},
+				),
+			)
+		}
+
+		if ca, ok := any(&input).(ContextAware); ok {
+			ca.SetContext(ctx)
+		}
 
 		var writer bytes.Buffer
 		err := op(input, &writer)
@@ -37,17 +51,21 @@ func GenToolHandler[T any](
 		inputJSON, _ := json.Marshal(input)
 
 		if err != nil {
-			logger.ErrorContext(ctx, err.Error(), "input", string(inputJSON))
+			if logger != nil {
+				logger.ErrorContext(ctx, err.Error(), "input", string(inputJSON))
+			}
 			slog.ErrorContext(
 				ctx, err.Error(), "tool", toolName, "input", string(inputJSON),
 			)
 			return nil, nil, err
 		}
 
-		logger.InfoContext(
-			ctx, toolName,
-			"input", string(inputJSON), "output_length", writer.Len(),
-		)
+		if logger != nil {
+			logger.InfoContext(
+				ctx, toolName,
+				"input", string(inputJSON), "output_length", writer.Len(),
+			)
+		}
 		slog.InfoContext(
 			ctx, toolName,
 			"input", string(inputJSON), "output_length", writer.Len(),
@@ -67,24 +85,31 @@ func GenResourceHandler(
 	return func(
 		ctx context.Context, req *mcp.ReadResourceRequest,
 	) (*mcp.ReadResourceResult, error) {
-		logger := slog.New(
-			mcp.NewLoggingHandler(
-				req.Session,
-				&mcp.LoggingHandlerOptions{
-					LoggerName: name, MinInterval: time.Second,
-				},
-			),
-		)
+		var logger *slog.Logger
+		if req.Session != nil {
+			logger = slog.New(
+				mcp.NewLoggingHandler(
+					req.Session,
+					&mcp.LoggingHandlerOptions{
+						LoggerName: name, MinInterval: time.Second,
+					},
+				),
+			)
+		}
 
 		var writer bytes.Buffer
 		err := op(req, &writer)
 		if err != nil {
-			logger.ErrorContext(ctx, err.Error(), "uri", req.Params.URI)
+			if logger != nil {
+				logger.ErrorContext(ctx, err.Error(), "uri", req.Params.URI)
+			}
 			slog.ErrorContext(ctx, err.Error(), "uri", req.Params.URI)
 			return nil, err
 		}
 
-		logger.InfoContext(ctx, "resource read", "uri", req.Params.URI)
+		if logger != nil {
+			logger.InfoContext(ctx, "resource read", "uri", req.Params.URI)
+		}
 		slog.InfoContext(
 			ctx, "resource read", "resource", name, "uri", req.Params.URI,
 		)

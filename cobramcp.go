@@ -13,7 +13,9 @@ import (
 	"os"
 	"time"
 
+	"github.com/modelcontextprotocol/go-sdk/auth"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/modelcontextprotocol/go-sdk/oauthex"
 	"github.com/spf13/cobra"
 )
 
@@ -48,9 +50,30 @@ type Config struct {
 	// Defaults to 8216 if zero.
 	DefaultPort int
 
+	// Auth enables MCP OAuth authorization on the HTTP transport.
+	// When nil, no authentication is required (backward compatible).
+	Auth *AuthConfig
+
 	// ServerOptions allows overriding the full MCP server options.
 	// When set, Instructions, PageSize, and KeepAlive are ignored.
 	ServerOptions *mcp.ServerOptions
+}
+
+// AuthConfig enables MCP OAuth authorization on HTTP transport.
+type AuthConfig struct {
+	// ResourceMetadata is the OAuth 2.0 Protected Resource Metadata (RFC 9728)
+	// served at the well-known endpoint.
+	ResourceMetadata *oauthex.ProtectedResourceMetadata
+
+	// ResourceMetadataURL is the URL returned in WWW-Authenticate headers
+	// so clients can discover the resource metadata.
+	ResourceMetadataURL string
+
+	// TokenVerifier validates Bearer tokens on incoming requests.
+	TokenVerifier auth.TokenVerifier
+
+	// Scopes are the required OAuth scopes for accessing the MCP endpoint.
+	Scopes []string
 }
 
 // ServerAndCommand creates a new MCP server and a cobra command that starts
@@ -99,6 +122,31 @@ func newServer(cfg *Config) *mcp.Server {
 	return mcp.NewServer(impl, opts)
 }
 
+// buildHTTPHandler wraps the MCP streamable-HTTP handler with optional OAuth
+// middleware. When cfg.Auth is nil, the raw handler is returned unchanged.
+func buildHTTPHandler(cfg *Config, server *mcp.Server) http.Handler {
+	handler := mcp.NewStreamableHTTPHandler(
+		func(*http.Request) *mcp.Server { return server }, nil,
+	)
+	if cfg.Auth == nil {
+		return handler
+	}
+	mux := http.NewServeMux()
+	mux.Handle(
+		"/.well-known/oauth-protected-resource",
+		auth.ProtectedResourceMetadataHandler(cfg.Auth.ResourceMetadata),
+	)
+	authMiddleware := auth.RequireBearerToken(
+		cfg.Auth.TokenVerifier,
+		&auth.RequireBearerTokenOptions{
+			Scopes:              cfg.Auth.Scopes,
+			ResourceMetadataURL: cfg.Auth.ResourceMetadataURL,
+		},
+	)
+	mux.Handle("/mcp", authMiddleware(handler))
+	return mux
+}
+
 func newCommand(cfg *Config, server *mcp.Server) *cobra.Command {
 	var (
 		mode string
@@ -132,16 +180,13 @@ func newCommand(cfg *Config, server *mcp.Server) *cobra.Command {
 				}
 				err = server.Run(ctx, t)
 			case "http":
-				handler := mcp.NewStreamableHTTPHandler(
-					func(*http.Request) *mcp.Server {
-						return server
-					}, nil,
-				)
+				httpHandler := buildHTTPHandler(cfg, server)
 				slog.InfoContext(
 					ctx, "http server configuration",
 					"url", fmt.Sprintf("http://localhost:%d/mcp", port),
+					"auth", cfg.Auth != nil,
 				)
-				err = http.ListenAndServe(addr, handler)
+				err = http.ListenAndServe(addr, httpHandler)
 			default:
 				slog.ErrorContext(
 					ctx, "invalid mode",
