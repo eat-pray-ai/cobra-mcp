@@ -39,7 +39,7 @@ type Config struct {
 	Instructions string
 
 	// PageSize controls the pagination size for list operations.
-	// Defaults to 99 if zero.
+	// Defaults to 100 if zero.
 	PageSize int
 
 	// KeepAlive sets the interval for server keep-alive pings.
@@ -63,10 +63,12 @@ type Config struct {
 type AuthConfig struct {
 	// ResourceMetadata is the OAuth 2.0 Protected Resource Metadata (RFC 9728)
 	// served at the well-known endpoint.
+	// When nil, auto-constructed from BaseURL, AuthorizationServers, and Scopes.
 	ResourceMetadata *oauthex.ProtectedResourceMetadata
 
 	// ResourceMetadataURL is the URL returned in WWW-Authenticate headers
 	// so clients can discover the resource metadata.
+	// When empty, defaults to BaseURL + "/.well-known/oauth-protected-resource".
 	ResourceMetadataURL string
 
 	// TokenVerifier validates Bearer tokens on incoming requests.
@@ -74,6 +76,10 @@ type AuthConfig struct {
 
 	// Scopes are the required OAuth scopes for accessing the MCP endpoint.
 	Scopes []string
+
+	// AuthorizationServers lists the OAuth 2.0 authorization server URLs.
+	// Used when auto-constructing ResourceMetadata.
+	AuthorizationServers []string
 }
 
 // ServerAndCommand creates a new MCP server and a cobra command that starts
@@ -95,7 +101,7 @@ func newServer(cfg *Config) *mcp.Server {
 	if opts == nil {
 		pageSize := cfg.PageSize
 		if pageSize == 0 {
-			pageSize = 99
+			pageSize = 100
 		}
 		keepAlive := cfg.KeepAlive
 		if keepAlive == 0 {
@@ -149,8 +155,9 @@ func buildHTTPHandler(cfg *Config, server *mcp.Server) http.Handler {
 
 func newCommand(cfg *Config, server *mcp.Server) *cobra.Command {
 	var (
-		mode string
-		port int
+		mode    string
+		port    int
+		baseURL string
 	)
 
 	defaultPort := cfg.DefaultPort
@@ -166,6 +173,11 @@ func newCommand(cfg *Config, server *mcp.Server) *cobra.Command {
 			var err error
 			ctx := cmd.Context()
 			addr := fmt.Sprintf(":%d", port)
+
+			if cfg.Auth != nil {
+				resolveAuthDefaults(cfg.Auth, baseURL, port)
+			}
+
 			slog.InfoContext(
 				ctx, "starting MCP server",
 				"mode", mode,
@@ -207,6 +219,26 @@ func newCommand(cfg *Config, server *mcp.Server) *cobra.Command {
 
 	cmd.Flags().StringVarP(&mode, "mode", "m", "stdio", modeUsage)
 	cmd.Flags().IntVarP(&port, "port", "p", defaultPort, portUsage)
+	cmd.Flags().StringVarP(
+		&baseURL, "baseUrl", "b", "",
+		"Base URL for the MCP server (default http://localhost:<port>)",
+	)
 
 	return cmd
+}
+
+func resolveAuthDefaults(auth *AuthConfig, baseURL string, port int) {
+	if baseURL == "" {
+		baseURL = fmt.Sprintf("http://localhost:%d", port)
+	}
+	if auth.ResourceMetadataURL == "" {
+		auth.ResourceMetadataURL = baseURL + "/.well-known/oauth-protected-resource"
+	}
+	if auth.ResourceMetadata == nil {
+		auth.ResourceMetadata = &oauthex.ProtectedResourceMetadata{
+			Resource:             baseURL + "/mcp",
+			AuthorizationServers: auth.AuthorizationServers,
+			ScopesSupported:      auth.Scopes,
+		}
+	}
 }
