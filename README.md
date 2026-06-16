@@ -108,6 +108,9 @@ myapp mcp
 
 # Use as MCP server (HTTP)
 myapp mcp --mode http --port 8080
+
+# Use as MCP server (HTTP with OAuth, behind a reverse proxy)
+myapp mcp --mode http --auth --port 8080 --baseUrl https://mcp.example.com
 ```
 
 ## API
@@ -127,10 +130,31 @@ Returns an MCP server and a cobra command that starts it. Register tools and res
 | `Name`          | —       | Server implementation name                           |
 | `Version`       | —       | Server implementation version                        |
 | `Instructions`  | —       | Brief server description for clients                 |
-| `PageSize`      | `99`    | Pagination size for list operations                  |
+| `PageSize`      | `100`   | Pagination size for list operations                  |
 | `KeepAlive`     | `13s`   | Keep-alive ping interval                             |
 | `DefaultPort`   | `8216`  | Default port for `--mode http`                       |
+| `Auth`          | `nil`   | Enable MCP OAuth authorization (HTTP mode only)      |
 | `ServerOptions` | —       | Override full `*mcp.ServerOptions` (ignores above)   |
+
+### `AuthConfig`
+
+| Field                  | Default                      | Description                                      |
+|------------------------|------------------------------|--------------------------------------------------|
+| `ResourceMetadata`     | auto-derived from `BaseURL`  | OAuth 2.0 Protected Resource Metadata (RFC 9728) |
+| `ResourceMetadataURL`  | `BaseURL + /.well-known/...` | URL for WWW-Authenticate discovery               |
+| `TokenVerifier`        | —                            | Validates Bearer tokens on incoming requests     |
+| `Scopes`               | —                            | Required OAuth scopes                            |
+| `AuthorizationServers` | —                            | OAuth 2.0 authorization server URLs              |
+
+When `ResourceMetadata` is nil, it is auto-constructed from the `--baseUrl` flag (defaults to `http://localhost:<port>`), `AuthorizationServers`, and `Scopes`.
+
+```go
+mcpConfig.Auth = &cobramcp.AuthConfig{
+    TokenVerifier:        myTokenVerifier,
+    Scopes:               []string{"read", "write"},
+    AuthorizationServers: []string{"https://accounts.google.com"},
+}
+```
 
 ### `GenToolHandler`
 
@@ -139,6 +163,16 @@ func GenToolHandler[T any](toolName string, op func(T, io.Writer) error) mcp.Too
 ```
 
 Creates a typed tool handler: deserializes JSON input into `T`, calls `op`, returns output as text content. Logs input/output via MCP session logging.
+
+### `ContextAware`
+
+```go
+type ContextAware interface {
+    SetContext(context.Context)
+}
+```
+
+When a tool input type implements `ContextAware`, `GenToolHandler` calls `SetContext` with the request context before invoking the operation. Use this to pass authentication info or request-scoped values to your handlers.
 
 ### `GenResourceHandler`
 
@@ -153,7 +187,8 @@ Creates a resource handler: calls `op`, returns output with the given MIME type.
 - **Schema-first**: You provide `*jsonschema.Schema` for each tool — no auto-generation, no magic.
 - **In-process execution**: Tool handlers call your Go functions directly, not via subprocess.
 - **Transport included**: The generated `mcp` command handles stdio and HTTP transports.
-- **Minimal API**: Two exported functions (`ServerAndCommand`, `GenToolHandler`) + one config struct.
+- **Minimal API**: Three exported functions (`ServerAndCommand`, `GenToolHandler`, `GenResourceHandler`) + two config structs.
+- **OAuth built-in**: Optional MCP OAuth with auto-derived metadata from `--baseUrl` and `--port`.
 
 ## License
 
