@@ -112,16 +112,6 @@ func newServer(cfg *Config) *mcp.Server {
 			Instructions: cfg.Instructions,
 			PageSize:     pageSize,
 			KeepAlive:    keepAlive,
-			Capabilities: &mcp.ServerCapabilities{
-				Logging: &mcp.LoggingCapabilities{},
-				Resources: &mcp.ResourceCapabilities{
-					ListChanged: true,
-					Subscribe:   true,
-				},
-				Tools: &mcp.ToolCapabilities{
-					ListChanged: true,
-				},
-			},
 		}
 	}
 
