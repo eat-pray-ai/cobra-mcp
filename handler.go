@@ -76,6 +76,45 @@ func GenToolHandler[T any](
 	}
 }
 
+// GenPromptHandler creates an MCP prompt handler that calls op and returns
+// the resulting messages directly.
+func GenPromptHandler(
+	name string,
+	op func(*mcp.GetPromptRequest) ([]*mcp.PromptMessage, error),
+) mcp.PromptHandler {
+	return func(
+		ctx context.Context, req *mcp.GetPromptRequest,
+	) (*mcp.GetPromptResult, error) {
+		var logger *slog.Logger
+		if req.Session != nil {
+			logger = slog.New(
+				mcp.NewLoggingHandler(
+					req.Session,
+					&mcp.LoggingHandlerOptions{
+						LoggerName: name, MinInterval: time.Second,
+					},
+				),
+			)
+		}
+
+		messages, err := op(req)
+		if err != nil {
+			if logger != nil {
+				logger.ErrorContext(ctx, err.Error(), "prompt", name)
+			}
+			slog.ErrorContext(ctx, err.Error(), "prompt", name)
+			return nil, err
+		}
+
+		if logger != nil {
+			logger.InfoContext(ctx, "prompt get", "prompt", name)
+		}
+		slog.InfoContext(ctx, "prompt get", "prompt", name)
+
+		return &mcp.GetPromptResult{Messages: messages}, nil
+	}
+}
+
 // GenResourceHandler creates an MCP resource handler that calls op and returns
 // the written output as a JSON resource.
 func GenResourceHandler(

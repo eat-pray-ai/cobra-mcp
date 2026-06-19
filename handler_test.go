@@ -31,8 +31,8 @@ func TestGenToolHandler(t *testing.T) {
 	errBoom := errors.New("boom")
 
 	tests := []struct {
-		name     string
-		run      func(t *testing.T)
+		name string
+		run  func(t *testing.T)
 	}{
 		{
 			name: "injects context into ContextAware input",
@@ -53,7 +53,9 @@ func TestGenToolHandler(t *testing.T) {
 				)
 
 				ctx := context.WithValue(context.Background(), ctxKey{}, "injected")
-				result, _, err := handler(ctx, &mcp.CallToolRequest{}, contextAwareInput{Name: "test"})
+				result, _, err := handler(
+					ctx, &mcp.CallToolRequest{}, contextAwareInput{Name: "test"},
+				)
 				if err != nil {
 					t.Fatalf("handler returned error: %v", err)
 				}
@@ -73,7 +75,9 @@ func TestGenToolHandler(t *testing.T) {
 					},
 				)
 
-				result, _, err := handler(context.Background(), &mcp.CallToolRequest{}, plainInput{Name: "world"})
+				result, _, err := handler(
+					context.Background(), &mcp.CallToolRequest{}, plainInput{Name: "world"},
+				)
 				if err != nil {
 					t.Fatalf("handler returned error: %v", err)
 				}
@@ -96,7 +100,9 @@ func TestGenToolHandler(t *testing.T) {
 					},
 				)
 
-				_, _, err := handler(context.Background(), &mcp.CallToolRequest{}, plainInput{Name: "x"})
+				_, _, err := handler(
+					context.Background(), &mcp.CallToolRequest{}, plainInput{Name: "x"},
+				)
 				if !errors.Is(err, errBoom) {
 					t.Errorf("error = %v, want %v", err, errBoom)
 				}
@@ -106,6 +112,128 @@ func TestGenToolHandler(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, tt.run)
+	}
+}
+
+func TestGenPromptHandler(t *testing.T) {
+	errMissing := errors.New("missing required argument: name")
+
+	tests := []struct {
+		name         string
+		promptName   string
+		op           func(*mcp.GetPromptRequest) ([]*mcp.PromptMessage, error)
+		args         map[string]string
+		wantErr      error
+		wantMessages []*mcp.PromptMessage
+	}{
+		{
+			name:       "success with arguments",
+			promptName: "greet",
+			op: func(req *mcp.GetPromptRequest) ([]*mcp.PromptMessage, error) {
+				return []*mcp.PromptMessage{
+					{
+						Role:    "user",
+						Content: &mcp.TextContent{Text: "Say hi to " + req.Params.Arguments["name"]},
+					},
+				}, nil
+			},
+			args: map[string]string{"name": "Pat"},
+			wantMessages: []*mcp.PromptMessage{
+				{
+					Role:    "user",
+					Content: &mcp.TextContent{Text: "Say hi to Pat"},
+				},
+			},
+		},
+		{
+			name:       "multi-message conversation",
+			promptName: "review",
+			op: func(req *mcp.GetPromptRequest) ([]*mcp.PromptMessage, error) {
+				return []*mcp.PromptMessage{
+					{
+						Role:    "user",
+						Content: &mcp.TextContent{Text: "Review this code: " + req.Params.Arguments["code"]},
+					},
+					{
+						Role:    "assistant",
+						Content: &mcp.TextContent{Text: "I'll review the code for correctness and style."},
+					},
+				}, nil
+			},
+			args: map[string]string{"code": "fmt.Println()"},
+			wantMessages: []*mcp.PromptMessage{
+				{
+					Role:    "user",
+					Content: &mcp.TextContent{Text: "Review this code: fmt.Println()"},
+				},
+				{
+					Role:    "assistant",
+					Content: &mcp.TextContent{Text: "I'll review the code for correctness and style."},
+				},
+			},
+		},
+		{
+			name:       "op returns error",
+			promptName: "greet",
+			op: func(req *mcp.GetPromptRequest) ([]*mcp.PromptMessage, error) {
+				return nil, errMissing
+			},
+			args:    map[string]string{},
+			wantErr: errMissing,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(
+			tt.name, func(t *testing.T) {
+				handler := GenPromptHandler(tt.promptName, tt.op)
+				req := &mcp.GetPromptRequest{
+					Params: &mcp.GetPromptParams{
+						Name:      tt.promptName,
+						Arguments: tt.args,
+					},
+				}
+
+				result, err := handler(context.Background(), req)
+
+				if tt.wantErr != nil {
+					if err == nil {
+						t.Fatal("expected error, got nil")
+					}
+					if !errors.Is(err, tt.wantErr) {
+						t.Errorf("error = %v, want %v", err, tt.wantErr)
+					}
+					if result != nil {
+						t.Errorf("expected nil result on error, got %v", result)
+					}
+					return
+				}
+
+				if err != nil {
+					t.Fatalf("handler returned error: %v", err)
+				}
+				if result == nil {
+					t.Fatal("expected non-nil result")
+				}
+				if len(result.Messages) != len(tt.wantMessages) {
+					t.Fatalf(
+						"got %d messages, want %d",
+						len(result.Messages), len(tt.wantMessages),
+					)
+				}
+				for i, msg := range result.Messages {
+					want := tt.wantMessages[i]
+					if msg.Role != want.Role {
+						t.Errorf("message[%d] Role = %q, want %q", i, msg.Role, want.Role)
+					}
+					gotText := msg.Content.(*mcp.TextContent).Text
+					wantText := want.Content.(*mcp.TextContent).Text
+					if gotText != wantText {
+						t.Errorf("message[%d] Text = %q, want %q", i, gotText, wantText)
+					}
+				}
+			},
+		)
 	}
 }
 
@@ -155,46 +283,48 @@ func TestGenResourceHandler(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			handler := GenResourceHandler(tt.resName, tt.mimeType, tt.op)
-			req := &mcp.ReadResourceRequest{
-				Params: &mcp.ReadResourceParams{URI: tt.uri},
-			}
-
-			result, err := handler(context.Background(), req)
-
-			if tt.wantErr != nil {
-				if err == nil {
-					t.Fatal("expected error, got nil")
+		t.Run(
+			tt.name, func(t *testing.T) {
+				handler := GenResourceHandler(tt.resName, tt.mimeType, tt.op)
+				req := &mcp.ReadResourceRequest{
+					Params: &mcp.ReadResourceParams{URI: tt.uri},
 				}
-				if !errors.Is(err, tt.wantErr) {
-					t.Errorf("error = %v, want %v", err, tt.wantErr)
-				}
-				if result != nil {
-					t.Errorf("expected nil result on error, got %v", result)
-				}
-				return
-			}
 
-			if err != nil {
-				t.Fatalf("handler returned error: %v", err)
-			}
-			if result == nil {
-				t.Fatal("expected non-nil result")
-			}
-			if len(result.Contents) != 1 {
-				t.Fatalf("expected 1 content, got %d", len(result.Contents))
-			}
-			c := result.Contents[0]
-			if c.URI != tt.uri {
-				t.Errorf("URI = %q, want %q", c.URI, tt.uri)
-			}
-			if c.MIMEType != tt.mimeType {
-				t.Errorf("MIMEType = %q, want %q", c.MIMEType, tt.mimeType)
-			}
-			if c.Text != tt.wantText {
-				t.Errorf("Text = %q, want %q", c.Text, tt.wantText)
-			}
-		})
+				result, err := handler(context.Background(), req)
+
+				if tt.wantErr != nil {
+					if err == nil {
+						t.Fatal("expected error, got nil")
+					}
+					if !errors.Is(err, tt.wantErr) {
+						t.Errorf("error = %v, want %v", err, tt.wantErr)
+					}
+					if result != nil {
+						t.Errorf("expected nil result on error, got %v", result)
+					}
+					return
+				}
+
+				if err != nil {
+					t.Fatalf("handler returned error: %v", err)
+				}
+				if result == nil {
+					t.Fatal("expected non-nil result")
+				}
+				if len(result.Contents) != 1 {
+					t.Fatalf("expected 1 content, got %d", len(result.Contents))
+				}
+				c := result.Contents[0]
+				if c.URI != tt.uri {
+					t.Errorf("URI = %q, want %q", c.URI, tt.uri)
+				}
+				if c.MIMEType != tt.mimeType {
+					t.Errorf("MIMEType = %q, want %q", c.MIMEType, tt.mimeType)
+				}
+				if c.Text != tt.wantText {
+					t.Errorf("Text = %q, want %q", c.Text, tt.wantText)
+				}
+			},
+		)
 	}
 }
