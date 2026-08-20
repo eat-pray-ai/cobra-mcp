@@ -29,10 +29,14 @@ jobs:
   go-test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: actions/setup-go@v6
         with:
           go-version-file: ./go.mod
+      - name: Lint
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.12
       - name: Go test
         run: |
           go test ./... -coverprofile=${{ env.COVERAGE_FILE }}
