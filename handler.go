@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
-	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -27,20 +26,8 @@ func GenToolHandler[T any](
 	toolName string, op func(T, io.Writer) error,
 ) mcp.ToolHandlerFor[T, any] {
 	return func(
-		ctx context.Context, req *mcp.CallToolRequest, input T,
+		ctx context.Context, _ *mcp.CallToolRequest, input T,
 	) (*mcp.CallToolResult, any, error) {
-		var logger *slog.Logger
-		if req.Session != nil {
-			logger = slog.New(
-				mcp.NewLoggingHandler(
-					req.Session,
-					&mcp.LoggingHandlerOptions{
-						LoggerName: toolName, MinInterval: time.Second,
-					},
-				),
-			)
-		}
-
 		if ca, ok := any(&input).(ContextAware); ok {
 			ca.SetContext(ctx)
 		}
@@ -51,21 +38,12 @@ func GenToolHandler[T any](
 		inputJSON, _ := json.Marshal(input)
 
 		if err != nil {
-			if logger != nil {
-				logger.ErrorContext(ctx, err.Error(), "input", string(inputJSON))
-			}
 			slog.ErrorContext(
 				ctx, err.Error(), "tool", toolName, "input", string(inputJSON),
 			)
 			return nil, nil, err
 		}
 
-		if logger != nil {
-			logger.InfoContext(
-				ctx, toolName,
-				"input", string(inputJSON), "output_length", writer.Len(),
-			)
-		}
 		slog.InfoContext(
 			ctx, toolName,
 			"input", string(inputJSON), "output_length", writer.Len(),
@@ -85,32 +63,13 @@ func GenPromptHandler(
 	return func(
 		ctx context.Context, req *mcp.GetPromptRequest,
 	) (*mcp.GetPromptResult, error) {
-		var logger *slog.Logger
-		if req.Session != nil {
-			logger = slog.New(
-				mcp.NewLoggingHandler(
-					req.Session,
-					&mcp.LoggingHandlerOptions{
-						LoggerName: name, MinInterval: time.Second,
-					},
-				),
-			)
-		}
-
 		messages, err := op(req)
 		if err != nil {
-			if logger != nil {
-				logger.ErrorContext(ctx, err.Error(), "prompt", name)
-			}
 			slog.ErrorContext(ctx, err.Error(), "prompt", name)
 			return nil, err
 		}
 
-		if logger != nil {
-			logger.InfoContext(ctx, "prompt get", "prompt", name)
-		}
 		slog.InfoContext(ctx, "prompt get", "prompt", name)
-
 		return &mcp.GetPromptResult{Messages: messages}, nil
 	}
 }
@@ -124,35 +83,16 @@ func GenResourceHandler(
 	return func(
 		ctx context.Context, req *mcp.ReadResourceRequest,
 	) (*mcp.ReadResourceResult, error) {
-		var logger *slog.Logger
-		if req.Session != nil {
-			logger = slog.New(
-				mcp.NewLoggingHandler(
-					req.Session,
-					&mcp.LoggingHandlerOptions{
-						LoggerName: name, MinInterval: time.Second,
-					},
-				),
-			)
-		}
-
 		var writer bytes.Buffer
 		err := op(req, &writer)
 		if err != nil {
-			if logger != nil {
-				logger.ErrorContext(ctx, err.Error(), "uri", req.Params.URI)
-			}
 			slog.ErrorContext(ctx, err.Error(), "uri", req.Params.URI)
 			return nil, err
 		}
 
-		if logger != nil {
-			logger.InfoContext(ctx, "resource read", "uri", req.Params.URI)
-		}
 		slog.InfoContext(
 			ctx, "resource read", "resource", name, "uri", req.Params.URI,
 		)
-
 		return &mcp.ReadResourceResult{
 			Contents: []*mcp.ResourceContents{
 				{URI: req.Params.URI, MIMEType: mimeType, Text: writer.String()},
