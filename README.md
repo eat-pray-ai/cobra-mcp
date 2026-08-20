@@ -1,9 +1,15 @@
 # cobra-mcp
 
+[![GitHub License](https://img.shields.io/github/license/eat-pray-ai/cobra-mcp?style=flat-square)](https://github.com/eat-pray-ai/cobra-mcp?tab=Apache-2.0-1-ov-file)
+[![Go Reference](https://pkg.go.dev/badge/github.com/eat-pray-ai/cobra-mcp?style=flat-square)](https://pkg.go.dev/github.com/eat-pray-ai/cobra-mcp)
+[![Go Coverage](https://github.com/eat-pray-ai/cobra-mcp/wiki/coverage.svg)](https://raw.githack.com/wiki/eat-pray-ai/cobra-mcp/coverage.html)
+[![GitHub Actions test Status](https://img.shields.io/github/actions/workflow/status/eat-pray-ai/cobra-mcp/test.yml?style=flat-square&logo=githubactions&label=test)](https://github.com/eat-pray-ai/cobra-mcp/actions/workflows/test.yml)
+[![GitHub Release](https://img.shields.io/github/v/release/eat-pray-ai/cobra-mcp?sort=semver&style=flat-square&logo=go)](https://github.com/eat-pray-ai/cobra-mcp/releases/latest)
+
 Turn any [Cobra](https://github.com/spf13/cobra) CLI into an [MCP](https://modelcontextprotocol.io/) server.
 
 `cobra-mcp` gives you a pre-configured `*mcp.Server` and a `mcp` subcommand (stdio + HTTP) in one call.
-You keep full control over tool/resource/prompt schemas — the package handles wiring, transport, and logging.
+You keep full control over tool/resource/prompt schemas — the package handles wiring and transport.
 
 ## Install
 
@@ -36,8 +42,11 @@ rootCmd.AddCommand(mcpCmd)
 # Use as MCP server (stdio)
 myapp mcp
 
-# Use as MCP server (HTTP)
+# Use as MCP server (HTTP, binds 127.0.0.1 by default)
 myapp mcp --mode http --port 8080
+
+# Use as MCP server (HTTP, bind all interfaces)
+myapp mcp --mode http --port 8080 --host 0.0.0.0
 
 # Use as MCP server (HTTP with OAuth)
 myapp mcp --mode http --port 8080 --baseUrl https://mcp.example.com
@@ -45,25 +54,26 @@ myapp mcp --mode http --port 8080 --baseUrl https://mcp.example.com
 
 ## API
 
-| Function | Signature | Purpose |
-|----------|-----------|---------|
-| `ServerAndCommand` | `(cfg *Config) (*mcp.Server, *cobra.Command)` | Create MCP server + cobra command |
-| `GenToolHandler` | `[T any](name string, op func(T, io.Writer) error)` | Typed tool handler with JSON deserialization |
-| `GenResourceHandler` | `(name, mimeType string, op func(*mcp.ReadResourceRequest, io.Writer) error)` | Resource handler with MIME type |
-| `GenPromptHandler` | `(name string, op func(*mcp.GetPromptRequest) ([]*mcp.PromptMessage, error))` | Multi-message prompt handler |
+| Function             | Signature                                                                     | Purpose                                      |
+|----------------------|-------------------------------------------------------------------------------|----------------------------------------------|
+| `ServerAndCommand`   | `(cfg *Config) (*mcp.Server, *cobra.Command)`                                 | Create MCP server + cobra command            |
+| `GenToolHandler`     | `[T any](name string, op func(T, io.Writer) error)`                           | Typed tool handler with JSON deserialization |
+| `GenResourceHandler` | `(name, mimeType string, op func(*mcp.ReadResourceRequest, io.Writer) error)` | Resource handler with MIME type              |
+| `GenPromptHandler`   | `(name string, op func(*mcp.GetPromptRequest) ([]*mcp.PromptMessage, error))` | Multi-message prompt handler                 |
 
 ### Config
 
-| Field | Default | Description |
-|-------|---------|-------------|
-| `Name` | — | Server implementation name |
-| `Version` | — | Server implementation version |
-| `Instructions` | — | Brief server description |
-| `PageSize` | `100` | Pagination size |
-| `KeepAlive` | `13s` | Keep-alive ping interval |
-| `DefaultPort` | `8216` | Default HTTP port |
-| `Auth` | `nil` | OAuth config (HTTP only) |
-| `ServerOptions` | — | Override full `*mcp.ServerOptions` |
+| Field           | Default     | Description                        |
+|-----------------|-------------|------------------------------------|
+| `Name`          | —           | Server implementation name         |
+| `Version`       | —           | Server implementation version      |
+| `Instructions`  | —           | Brief server description           |
+| `PageSize`      | `100`       | Pagination size                    |
+| `KeepAlive`     | `13s`       | Keep-alive ping interval           |
+| `DefaultHost`   | `127.0.0.1` | Default HTTP bind address          |
+| `DefaultPort`   | `8216`      | Default HTTP port                  |
+| `Auth`          | `nil`       | OAuth config (HTTP only)           |
+| `ServerOptions` | —           | Override full `*mcp.ServerOptions` |
 
 ### ContextAware
 
