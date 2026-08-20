@@ -23,6 +23,7 @@ const (
 	mcpShort  = "Start MCP server"
 	mcpLong   = "Start MCP server to handle requests from clients"
 	modeUsage = "stdio|http"
+	hostUsage = "Host to bind for HTTP mode"
 	portUsage = "Port to listen on for HTTP mode"
 )
 
@@ -49,6 +50,10 @@ type Config struct {
 	// DefaultPort is the default port for HTTP mode.
 	// Defaults to 8216 if zero.
 	DefaultPort int
+
+	// DefaultHost is the default bind address for HTTP mode.
+	// Defaults to "127.0.0.1" if empty.
+	DefaultHost string
 
 	// Auth enables MCP OAuth authorization on the HTTP transport.
 	// When nil, no authentication is required (backward compatible).
@@ -146,6 +151,7 @@ func buildHTTPHandler(cfg *Config, server *mcp.Server) http.Handler {
 func newCommand(cfg *Config, server *mcp.Server) *cobra.Command {
 	var (
 		mode    string
+		host    string
 		port    int
 		baseURL string
 	)
@@ -155,6 +161,11 @@ func newCommand(cfg *Config, server *mcp.Server) *cobra.Command {
 		defaultPort = 8216
 	}
 
+	defaultHost := cfg.DefaultHost
+	if defaultHost == "" {
+		defaultHost = "127.0.0.1"
+	}
+
 	cmd := &cobra.Command{
 		Use:   "mcp",
 		Short: mcpShort,
@@ -162,10 +173,10 @@ func newCommand(cfg *Config, server *mcp.Server) *cobra.Command {
 		Run: func(cmd *cobra.Command, args []string) {
 			var err error
 			ctx := cmd.Context()
-			addr := fmt.Sprintf(":%d", port)
+			addr := fmt.Sprintf("%s:%d", host, port)
 
 			if cfg.Auth != nil {
-				resolveAuthDefaults(cfg.Auth, baseURL, port)
+				resolveAuthDefaults(cfg.Auth, baseURL, addr)
 			}
 
 			slog.InfoContext(
@@ -185,7 +196,7 @@ func newCommand(cfg *Config, server *mcp.Server) *cobra.Command {
 				httpHandler := buildHTTPHandler(cfg, server)
 				slog.InfoContext(
 					ctx, "http server configuration",
-					"url", fmt.Sprintf("http://localhost:%d/mcp", port),
+					"url", fmt.Sprintf("http://%s/mcp", addr),
 					"auth", cfg.Auth != nil,
 				)
 				err = http.ListenAndServe(addr, httpHandler)
@@ -208,6 +219,7 @@ func newCommand(cfg *Config, server *mcp.Server) *cobra.Command {
 	}
 
 	cmd.Flags().StringVarP(&mode, "mode", "m", "stdio", modeUsage)
+	cmd.Flags().StringVar(&host, "host", defaultHost, hostUsage)
 	cmd.Flags().IntVarP(&port, "port", "p", defaultPort, portUsage)
 	cmd.Flags().StringVarP(
 		&baseURL, "baseUrl", "b", "",
@@ -217,9 +229,9 @@ func newCommand(cfg *Config, server *mcp.Server) *cobra.Command {
 	return cmd
 }
 
-func resolveAuthDefaults(auth *AuthConfig, baseURL string, port int) {
+func resolveAuthDefaults(auth *AuthConfig, baseURL, addr string) {
 	if baseURL == "" {
-		baseURL = fmt.Sprintf("http://localhost:%d", port)
+		baseURL = fmt.Sprintf("http://%s", addr)
 	}
 	if auth.ResourceMetadataURL == "" {
 		auth.ResourceMetadataURL = baseURL + "/.well-known/oauth-protected-resource"
