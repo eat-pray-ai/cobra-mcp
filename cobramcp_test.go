@@ -30,6 +30,150 @@ func mockVerifier() auth.TokenVerifier {
 	}
 }
 
+func TestServerAndCommand(t *testing.T) {
+	cfg := &Config{Name: "test-app", Version: "1.0.0", Instructions: "test instructions"}
+	server, cmd := ServerAndCommand(cfg)
+
+	if server == nil {
+		t.Fatal("expected non-nil server")
+	}
+	if cmd == nil {
+		t.Fatal("expected non-nil command")
+	}
+	if cmd.Use != "mcp" {
+		t.Errorf("cmd.Use = %q, want %q", cmd.Use, "mcp")
+	}
+}
+
+func TestNewServer_Defaults(t *testing.T) {
+	cfg := &Config{Name: "s", Version: "1.0.0"}
+	server := newServer(cfg)
+	if server == nil {
+		t.Fatal("expected non-nil server")
+	}
+}
+
+func TestNewServer_CustomOptions(t *testing.T) {
+	custom := &mcp.ServerOptions{
+		Instructions: "custom",
+		PageSize:     50,
+		KeepAlive:    5 * time.Second,
+	}
+	cfg := &Config{Name: "s", Version: "1.0.0", ServerOptions: custom}
+	server := newServer(cfg)
+	if server == nil {
+		t.Fatal("expected non-nil server")
+	}
+}
+
+func TestNewCommand_DefaultFlags(t *testing.T) {
+	cfg := &Config{Name: "test", Version: "0.1.0"}
+	server := newServer(cfg)
+	cmd := newCommand(cfg, server)
+
+	mode, _ := cmd.Flags().GetString("mode")
+	if mode != "stdio" {
+		t.Errorf("default mode = %q, want %q", mode, "stdio")
+	}
+
+	host, _ := cmd.Flags().GetString("host")
+	if host != "127.0.0.1" {
+		t.Errorf("default host = %q, want %q", host, "127.0.0.1")
+	}
+
+	port, _ := cmd.Flags().GetInt("port")
+	if port != 8216 {
+		t.Errorf("default port = %d, want %d", port, 8216)
+	}
+
+	baseURL, _ := cmd.Flags().GetString("baseUrl")
+	if baseURL != "" {
+		t.Errorf("default baseUrl = %q, want empty", baseURL)
+	}
+}
+
+func TestNewCommand_CustomDefaults(t *testing.T) {
+	cfg := &Config{
+		Name:        "test",
+		Version:     "0.1.0",
+		DefaultHost: "0.0.0.0",
+		DefaultPort: 9000,
+	}
+	server := newServer(cfg)
+	cmd := newCommand(cfg, server)
+
+	host, _ := cmd.Flags().GetString("host")
+	if host != "0.0.0.0" {
+		t.Errorf("custom default host = %q, want %q", host, "0.0.0.0")
+	}
+
+	port, _ := cmd.Flags().GetInt("port")
+	if port != 9000 {
+		t.Errorf("custom default port = %d, want %d", port, 9000)
+	}
+}
+
+func TestResolveAuthDefaults_AllEmpty(t *testing.T) {
+	ac := &AuthConfig{
+		Scopes:               []string{"read", "write"},
+		AuthorizationServers: []string{"https://auth.example.com"},
+	}
+	resolveAuthDefaults(ac, "", "127.0.0.1:8216")
+
+	wantMetaURL := "http://127.0.0.1:8216/.well-known/oauth-protected-resource"
+	if ac.ResourceMetadataURL != wantMetaURL {
+		t.Errorf("ResourceMetadataURL = %q, want %q", ac.ResourceMetadataURL, wantMetaURL)
+	}
+	if ac.ResourceMetadata == nil {
+		t.Fatal("expected ResourceMetadata to be auto-constructed")
+	}
+	if ac.ResourceMetadata.Resource != "http://127.0.0.1:8216/mcp" {
+		t.Errorf("Resource = %q, want %q", ac.ResourceMetadata.Resource, "http://127.0.0.1:8216/mcp")
+	}
+	if len(ac.ResourceMetadata.AuthorizationServers) != 1 || ac.ResourceMetadata.AuthorizationServers[0] != "https://auth.example.com" {
+		t.Errorf("AuthorizationServers = %v", ac.ResourceMetadata.AuthorizationServers)
+	}
+	if len(ac.ResourceMetadata.ScopesSupported) != 2 {
+		t.Errorf("ScopesSupported = %v", ac.ResourceMetadata.ScopesSupported)
+	}
+}
+
+func TestResolveAuthDefaults_WithBaseURL(t *testing.T) {
+	ac := &AuthConfig{
+		Scopes:               []string{"read"},
+		AuthorizationServers: []string{"https://auth.example.com"},
+	}
+	resolveAuthDefaults(ac, "https://mcp.example.com", "0.0.0.0:8216")
+
+	wantMetaURL := "https://mcp.example.com/.well-known/oauth-protected-resource"
+	if ac.ResourceMetadataURL != wantMetaURL {
+		t.Errorf("ResourceMetadataURL = %q, want %q", ac.ResourceMetadataURL, wantMetaURL)
+	}
+	if ac.ResourceMetadata.Resource != "https://mcp.example.com/mcp" {
+		t.Errorf("Resource = %q, want %q", ac.ResourceMetadata.Resource, "https://mcp.example.com/mcp")
+	}
+}
+
+func TestResolveAuthDefaults_PresetValues(t *testing.T) {
+	preset := &oauthex.ProtectedResourceMetadata{
+		Resource: "http://custom/mcp",
+	}
+	ac := &AuthConfig{
+		ResourceMetadata:    preset,
+		ResourceMetadataURL: "http://custom/.well-known/oauth-protected-resource",
+		TokenVerifier:       mockVerifier(),
+		Scopes:              []string{"read"},
+	}
+	resolveAuthDefaults(ac, "http://should-not-override", "127.0.0.1:9999")
+
+	if ac.ResourceMetadataURL != "http://custom/.well-known/oauth-protected-resource" {
+		t.Errorf("ResourceMetadataURL was overwritten: %q", ac.ResourceMetadataURL)
+	}
+	if ac.ResourceMetadata != preset {
+		t.Error("ResourceMetadata was overwritten")
+	}
+}
+
 func TestHTTPMode_NoAuth_BackwardCompat(t *testing.T) {
 	cfg := &Config{Name: "test", Version: "0.1.0"}
 	server := newServer(cfg)
@@ -72,6 +216,35 @@ func TestHTTPMode_Auth_Unauthenticated(t *testing.T) {
 	}
 	if rr.Header().Get("WWW-Authenticate") == "" {
 		t.Error("expected WWW-Authenticate header")
+	}
+}
+
+func TestHTTPMode_Auth_InvalidToken(t *testing.T) {
+	cfg := &Config{
+		Name: "test", Version: "0.1.0",
+		Auth: &AuthConfig{
+			ResourceMetadata: &oauthex.ProtectedResourceMetadata{
+				Resource:             "http://localhost:8216/mcp",
+				AuthorizationServers: []string{"https://accounts.google.com"},
+				ScopesSupported:      []string{"read"},
+			},
+			ResourceMetadataURL: "http://localhost:8216/.well-known/oauth-protected-resource",
+			TokenVerifier:       mockVerifier(),
+			Scopes:              []string{"read"},
+		},
+	}
+	server := newServer(cfg)
+	handler := buildHTTPHandler(cfg, server)
+
+	req := httptest.NewRequest("POST", "/mcp", nil)
+	req.Header.Set("Authorization", "Bearer invalid-token")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401 for invalid token, got %d", rr.Code)
 	}
 }
 
@@ -141,5 +314,19 @@ func TestHTTPMode_Auth_ValidToken(t *testing.T) {
 
 	if rr.Code == http.StatusUnauthorized {
 		t.Errorf("expected authenticated request to pass, got 401")
+	}
+}
+
+func TestBuildHTTPHandler_NoAuth_ReturnsPlainHandler(t *testing.T) {
+	cfg := &Config{Name: "test", Version: "0.1.0"}
+	server := newServer(cfg)
+	handler := buildHTTPHandler(cfg, server)
+
+	req := httptest.NewRequest("GET", "/.well-known/oauth-protected-resource", nil)
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code == http.StatusOK {
+		t.Error("plain handler should not serve well-known endpoint")
 	}
 }
