@@ -194,10 +194,16 @@ func newCommand(cfg *Config, server *mcp.Server) *cobra.Command {
 				err = server.Run(ctx, t)
 			case "http":
 				httpHandler := buildHTTPHandler(cfg, server)
+				url := fmt.Sprintf("http://%s/mcp", addr)
+				if cfg.Auth == nil {
+					slog.WarnContext(
+						ctx,
+						"no authentication configured; all MCP tools are exposed to any reachable client",
+						"url", url,
+					)
+				}
 				slog.InfoContext(
-					ctx, "http server configuration",
-					"url", fmt.Sprintf("http://%s/mcp", addr),
-					"auth", cfg.Auth != nil,
+					ctx, "http server configuration", "url", url, "auth", cfg.Auth != nil,
 				)
 				err = http.ListenAndServe(addr, httpHandler)
 			default:
