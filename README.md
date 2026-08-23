@@ -42,11 +42,14 @@ rootCmd.AddCommand(mcpCmd)
 # Use as MCP server (stdio)
 myapp mcp
 
-# Use as MCP server (HTTP, binds 127.0.0.1 by default)
+# Use as MCP server (HTTP, stateless by default for MCP 2026-07-28)
 myapp mcp --mode http --port 8080
 
 # Use as MCP server (HTTP, bind all interfaces)
 myapp mcp --mode http --port 8080 --host 0.0.0.0
+
+# Use as MCP server (HTTP, stateful sessions for legacy clients)
+myapp mcp --mode http --port 8080 --stateless=false
 
 # Use as MCP server (HTTP with OAuth)
 myapp mcp --mode http --port 8080 --baseUrl https://mcp.example.com
@@ -63,17 +66,16 @@ myapp mcp --mode http --port 8080 --baseUrl https://mcp.example.com
 
 ### Config
 
-| Field           | Default     | Description                        |
-|-----------------|-------------|------------------------------------|
-| `Name`          | —           | Server implementation name         |
-| `Version`       | —           | Server implementation version      |
-| `Instructions`  | —           | Brief server description           |
-| `PageSize`      | `100`       | Pagination size                    |
-| `KeepAlive`     | `13s`       | Keep-alive ping interval           |
-| `DefaultHost`   | `127.0.0.1` | Default HTTP bind address          |
-| `DefaultPort`   | `8216`      | Default HTTP port                  |
-| `Auth`          | `nil`       | OAuth config (HTTP only)           |
-| `ServerOptions` | —           | Override full `*mcp.ServerOptions` |
+| Field           | Default     | Description                                          |
+|-----------------|-------------|------------------------------------------------------|
+| `Name`          | —           | Server implementation name                           |
+| `Version`       | —           | Server implementation version                        |
+| `Instructions`  | —           | Brief server description                             |
+| `PageSize`      | `100`       | Pagination size                                      |
+| `KeepAlive`     | `13s`       | Keep-alive ping interval                             |
+| `Auth`          | `nil`       | OAuth config (HTTP only)                             |
+| `HTTPOptions`   | `nil`       | Override `*mcp.StreamableHTTPOptions` (HTTP only)    |
+| `ServerOptions` | `nil`       | Override full `*mcp.ServerOptions`                   |
 
 ### ContextAware
 

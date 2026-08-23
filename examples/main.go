@@ -58,6 +58,9 @@ var server, mcpCmd = cobramcp.ServerAndCommand(
 		Name:         "myapp",
 		Version:      "0.1.0",
 		Instructions: "A demo CLI with MCP support",
+		HTTPOptions: &mcp.StreamableHTTPOptions{
+			PropagateRequestCancellation: true,
+		},
 	},
 )
 
