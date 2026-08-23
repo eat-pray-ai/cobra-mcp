@@ -20,11 +20,15 @@ import (
 )
 
 const (
-	mcpShort  = "Start MCP server"
-	mcpLong   = "Start MCP server to handle requests from clients"
-	modeUsage = "stdio|http"
-	hostUsage = "Host to bind for HTTP mode"
-	portUsage = "Port to listen on for HTTP mode"
+	mcpShort       = "Start MCP server"
+	mcpLong        = "Start MCP server to handle requests from clients"
+	modeUsage      = "stdio|http"
+	hostUsage      = "Host to bind for HTTP mode"
+	portUsage      = "Port to listen on for HTTP mode"
+	baseURLUsage   = "Base URL for the MCP server (default http://<host>:<port>)"
+	statelessUsage = "Enable stateless HTTP mode (required for MCP 2026-07-28 clients)"
+
+	wellKnownOAuthPath = "/.well-known/oauth-protected-resource"
 )
 
 // Config holds the settings used to create a new MCP server and its
@@ -47,17 +51,15 @@ type Config struct {
 	// Defaults to 13s if zero.
 	KeepAlive time.Duration
 
-	// DefaultPort is the default port for HTTP mode.
-	// Defaults to 8216 if zero.
-	DefaultPort int
-
-	// DefaultHost is the default bind address for HTTP mode.
-	// Defaults to "127.0.0.1" if empty.
-	DefaultHost string
-
 	// Auth enables MCP OAuth authorization on the HTTP transport.
 	// When nil, no authentication is required (backward compatible).
 	Auth *AuthConfig
+
+	// HTTPOptions allows overriding the full StreamableHTTP options.
+	// When set, the --stateless flag still overrides HTTPOptions.Stateless.
+	// Fields like JSONResponse, MaxRequestBodyBytes, and
+	// PropagateRequestCancellation can be configured here.
+	HTTPOptions *mcp.StreamableHTTPOptions
 
 	// ServerOptions allows overriding the full MCP server options.
 	// When set, Instructions, PageSize, and KeepAlive are ignored.
@@ -73,7 +75,7 @@ type AuthConfig struct {
 
 	// ResourceMetadataURL is the URL returned in WWW-Authenticate headers
 	// so clients can discover the resource metadata.
-	// When empty, defaults to BaseURL + "/.well-known/oauth-protected-resource".
+	// When empty, defaults to BaseURL + wellKnownOAuthPath.
 	ResourceMetadataURL string
 
 	// TokenVerifier validates Bearer tokens on incoming requests.
@@ -125,16 +127,21 @@ func newServer(cfg *Config) *mcp.Server {
 
 // buildHTTPHandler wraps the MCP streamable-HTTP handler with optional OAuth
 // middleware. When cfg.Auth is nil, the raw handler is returned unchanged.
-func buildHTTPHandler(cfg *Config, server *mcp.Server) http.Handler {
+func buildHTTPHandler(cfg *Config, server *mcp.Server, stateless bool) http.Handler {
+	var opts mcp.StreamableHTTPOptions
+	if cfg.HTTPOptions != nil {
+		opts = *cfg.HTTPOptions
+	}
+	opts.Stateless = stateless
 	handler := mcp.NewStreamableHTTPHandler(
-		func(*http.Request) *mcp.Server { return server }, nil,
+		func(*http.Request) *mcp.Server { return server }, &opts,
 	)
 	if cfg.Auth == nil {
 		return handler
 	}
 	mux := http.NewServeMux()
 	mux.Handle(
-		"/.well-known/oauth-protected-resource",
+		wellKnownOAuthPath,
 		auth.ProtectedResourceMetadataHandler(cfg.Auth.ResourceMetadata),
 	)
 	authMiddleware := auth.RequireBearerToken(
@@ -150,21 +157,12 @@ func buildHTTPHandler(cfg *Config, server *mcp.Server) http.Handler {
 
 func newCommand(cfg *Config, server *mcp.Server) *cobra.Command {
 	var (
-		mode    string
-		host    string
-		port    int
-		baseURL string
+		mode      string
+		host      string
+		port      int
+		baseURL   string
+		stateless bool
 	)
-
-	defaultPort := cfg.DefaultPort
-	if defaultPort == 0 {
-		defaultPort = 8216
-	}
-
-	defaultHost := cfg.DefaultHost
-	if defaultHost == "" {
-		defaultHost = "127.0.0.1"
-	}
 
 	cmd := &cobra.Command{
 		Use:   "mcp",
@@ -193,18 +191,17 @@ func newCommand(cfg *Config, server *mcp.Server) *cobra.Command {
 				}
 				err = server.Run(ctx, t)
 			case "http":
-				httpHandler := buildHTTPHandler(cfg, server)
-				url := fmt.Sprintf("http://%s/mcp", addr)
 				if cfg.Auth == nil {
 					slog.WarnContext(
 						ctx,
 						"no authentication configured; all MCP tools are exposed to any reachable client",
-						"url", url,
 					)
 				}
+				url := fmt.Sprintf("http://%s/mcp", addr)
 				slog.InfoContext(
 					ctx, "http server configuration", "url", url, "auth", cfg.Auth != nil,
 				)
+				httpHandler := buildHTTPHandler(cfg, server, stateless)
 				err = http.ListenAndServe(addr, httpHandler)
 			default:
 				slog.ErrorContext(
@@ -225,12 +222,10 @@ func newCommand(cfg *Config, server *mcp.Server) *cobra.Command {
 	}
 
 	cmd.Flags().StringVarP(&mode, "mode", "m", "stdio", modeUsage)
-	cmd.Flags().StringVar(&host, "host", defaultHost, hostUsage)
-	cmd.Flags().IntVarP(&port, "port", "p", defaultPort, portUsage)
-	cmd.Flags().StringVarP(
-		&baseURL, "baseUrl", "b", "",
-		"Base URL for the MCP server (default http://localhost:<port>)",
-	)
+	cmd.Flags().StringVar(&host, "host", "127.0.0.1", hostUsage)
+	cmd.Flags().IntVarP(&port, "port", "p", 8216, portUsage)
+	cmd.Flags().StringVarP(&baseURL, "baseUrl", "b", "", baseURLUsage)
+	cmd.Flags().BoolVar(&stateless, "stateless", true, statelessUsage)
 
 	return cmd
 }
@@ -240,7 +235,7 @@ func resolveAuthDefaults(auth *AuthConfig, baseURL, addr string) {
 		baseURL = fmt.Sprintf("http://%s", addr)
 	}
 	if auth.ResourceMetadataURL == "" {
-		auth.ResourceMetadataURL = baseURL + "/.well-known/oauth-protected-resource"
+		auth.ResourceMetadataURL = baseURL + wellKnownOAuthPath
 	}
 	if auth.ResourceMetadata == nil {
 		auth.ResourceMetadata = &oauthex.ProtectedResourceMetadata{

@@ -4,6 +4,7 @@
 package cobramcp
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -92,24 +93,22 @@ func TestNewCommand_DefaultFlags(t *testing.T) {
 	}
 }
 
-func TestNewCommand_CustomDefaults(t *testing.T) {
-	cfg := &Config{
-		Name:        "test",
-		Version:     "0.1.0",
-		DefaultHost: "0.0.0.0",
-		DefaultPort: 9000,
-	}
+func TestNewCommand_FlagOverrides(t *testing.T) {
+	cfg := &Config{Name: "test", Version: "0.1.0"}
 	server := newServer(cfg)
 	cmd := newCommand(cfg, server)
 
+	cmd.Flags().Set("host", "0.0.0.0")
+	cmd.Flags().Set("port", "9000")
+
 	host, _ := cmd.Flags().GetString("host")
 	if host != "0.0.0.0" {
-		t.Errorf("custom default host = %q, want %q", host, "0.0.0.0")
+		t.Errorf("overridden host = %q, want %q", host, "0.0.0.0")
 	}
 
 	port, _ := cmd.Flags().GetInt("port")
 	if port != 9000 {
-		t.Errorf("custom default port = %d, want %d", port, 9000)
+		t.Errorf("overridden port = %d, want %d", port, 9000)
 	}
 }
 
@@ -177,7 +176,7 @@ func TestResolveAuthDefaults_PresetValues(t *testing.T) {
 func TestHTTPMode_NoAuth_BackwardCompat(t *testing.T) {
 	cfg := &Config{Name: "test", Version: "0.1.0"}
 	server := newServer(cfg)
-	handler := buildHTTPHandler(cfg, server)
+	handler := buildHTTPHandler(cfg, server, false)
 
 	req := httptest.NewRequest("POST", "/mcp", nil)
 	req.Header.Set("Content-Type", "application/json")
@@ -205,7 +204,7 @@ func TestHTTPMode_Auth_Unauthenticated(t *testing.T) {
 		},
 	}
 	server := newServer(cfg)
-	handler := buildHTTPHandler(cfg, server)
+	handler := buildHTTPHandler(cfg, server, false)
 
 	req := httptest.NewRequest("POST", "/mcp", nil)
 	rr := httptest.NewRecorder()
@@ -234,7 +233,7 @@ func TestHTTPMode_Auth_InvalidToken(t *testing.T) {
 		},
 	}
 	server := newServer(cfg)
-	handler := buildHTTPHandler(cfg, server)
+	handler := buildHTTPHandler(cfg, server, false)
 
 	req := httptest.NewRequest("POST", "/mcp", nil)
 	req.Header.Set("Authorization", "Bearer invalid-token")
@@ -264,7 +263,7 @@ func TestHTTPMode_Auth_MetadataEndpoint(t *testing.T) {
 		},
 	}
 	server := newServer(cfg)
-	handler := buildHTTPHandler(cfg, server)
+	handler := buildHTTPHandler(cfg, server, false)
 
 	req := httptest.NewRequest("GET", "/.well-known/oauth-protected-resource", nil)
 	rr := httptest.NewRecorder()
@@ -303,7 +302,7 @@ func TestHTTPMode_Auth_ValidToken(t *testing.T) {
 	mcp.AddTool(server, &mcp.Tool{Name: "echo"}, func(ctx context.Context, req *mcp.CallToolRequest, input struct{}) (*mcp.CallToolResult, any, error) {
 		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "ok"}}}, nil, nil
 	})
-	handler := buildHTTPHandler(cfg, server)
+	handler := buildHTTPHandler(cfg, server, false)
 
 	req := httptest.NewRequest("POST", "/mcp", nil)
 	req.Header.Set("Authorization", "Bearer valid-token")
@@ -320,7 +319,7 @@ func TestHTTPMode_Auth_ValidToken(t *testing.T) {
 func TestBuildHTTPHandler_NoAuth_ReturnsPlainHandler(t *testing.T) {
 	cfg := &Config{Name: "test", Version: "0.1.0"}
 	server := newServer(cfg)
-	handler := buildHTTPHandler(cfg, server)
+	handler := buildHTTPHandler(cfg, server, false)
 
 	req := httptest.NewRequest("GET", "/.well-known/oauth-protected-resource", nil)
 	rr := httptest.NewRecorder()
@@ -328,5 +327,122 @@ func TestBuildHTTPHandler_NoAuth_ReturnsPlainHandler(t *testing.T) {
 
 	if rr.Code == http.StatusOK {
 		t.Error("plain handler should not serve well-known endpoint")
+	}
+}
+
+func TestHTTPMode_Stateless_RejectsGET(t *testing.T) {
+	cfg := &Config{Name: "test", Version: "0.1.0"}
+	server := newServer(cfg)
+	handler := buildHTTPHandler(cfg, server, true)
+
+	req := httptest.NewRequest("GET", "/mcp", nil)
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusMethodNotAllowed {
+		t.Errorf("stateless mode GET: expected 405, got %d", rr.Code)
+	}
+}
+
+func TestHTTPMode_Stateless_RejectsDELETE(t *testing.T) {
+	cfg := &Config{Name: "test", Version: "0.1.0"}
+	server := newServer(cfg)
+	handler := buildHTTPHandler(cfg, server, true)
+
+	req := httptest.NewRequest("DELETE", "/mcp", nil)
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusMethodNotAllowed {
+		t.Errorf("stateless mode DELETE: expected 405, got %d", rr.Code)
+	}
+}
+
+func TestHTTPMode_Stateless_AcceptsPOST(t *testing.T) {
+	cfg := &Config{Name: "test", Version: "0.1.0"}
+	server := newServer(cfg)
+	mcp.AddTool(server, &mcp.Tool{Name: "echo"}, func(ctx context.Context, req *mcp.CallToolRequest, input struct{}) (*mcp.CallToolResult, any, error) {
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "ok"}}}, nil, nil
+	})
+	handler := buildHTTPHandler(cfg, server, true)
+
+	body := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25"}}`
+	req := httptest.NewRequest("POST", "/mcp", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("stateless mode POST: expected 200, got %d (body: %s)", rr.Code, rr.Body.String())
+	}
+}
+
+func TestHTTPMode_Stateless_NoSessionHeader(t *testing.T) {
+	cfg := &Config{Name: "test", Version: "0.1.0"}
+	server := newServer(cfg)
+	handler := buildHTTPHandler(cfg, server, true)
+
+	body := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25"}}`
+	req := httptest.NewRequest("POST", "/mcp", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	if sessionID := rr.Header().Get("Mcp-Session-Id"); sessionID != "" {
+		t.Errorf("stateless mode should not return Mcp-Session-Id, got %q", sessionID)
+	}
+}
+
+func TestBuildHTTPHandler_HTTPOptions_Respected(t *testing.T) {
+	cfg := &Config{
+		Name:    "test",
+		Version: "0.1.0",
+		HTTPOptions: &mcp.StreamableHTTPOptions{
+			MaxRequestBodyBytes: 1024,
+		},
+	}
+	server := newServer(cfg)
+	handler := buildHTTPHandler(cfg, server, true)
+
+	// Verify the handler works (stateless override applies)
+	req := httptest.NewRequest("GET", "/mcp", nil)
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusMethodNotAllowed {
+		t.Errorf("expected 405 (stateless override), got %d", rr.Code)
+	}
+}
+
+func TestBuildHTTPHandler_HTTPOptions_StatelessOverride(t *testing.T) {
+	cfg := &Config{
+		Name:    "test",
+		Version: "0.1.0",
+		HTTPOptions: &mcp.StreamableHTTPOptions{
+			Stateless: false, // will be overridden by the stateless param
+		},
+	}
+	server := newServer(cfg)
+	handler := buildHTTPHandler(cfg, server, true)
+
+	req := httptest.NewRequest("GET", "/mcp", nil)
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusMethodNotAllowed {
+		t.Errorf("stateless flag should override HTTPOptions.Stateless, got %d", rr.Code)
+	}
+}
+
+func TestNewCommand_StatelessFlag(t *testing.T) {
+	cfg := &Config{Name: "test", Version: "0.1.0"}
+	server := newServer(cfg)
+	cmd := newCommand(cfg, server)
+
+	stateless, _ := cmd.Flags().GetBool("stateless")
+	if !stateless {
+		t.Error("default stateless should be true")
 	}
 }
