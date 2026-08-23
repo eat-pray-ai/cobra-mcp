@@ -55,9 +55,11 @@ func review(req *mcp.GetPromptRequest) ([]*mcp.PromptMessage, error) {
 
 var server, mcpCmd = cobramcp.ServerAndCommand(
 	&cobramcp.Config{
-		Name:         "myapp",
-		Version:      "0.1.0",
-		Instructions: "A demo CLI with MCP support",
+		Name:    "myapp",
+		Version: "0.1.0",
+		ServerOptions: &mcp.ServerOptions{
+			Instructions: "A demo CLI with MCP support",
+		},
 		HTTPOptions: &mcp.StreamableHTTPOptions{
 			PropagateRequestCancellation: true,
 		},

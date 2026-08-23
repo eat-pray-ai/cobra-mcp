@@ -32,7 +32,7 @@ func mockVerifier() auth.TokenVerifier {
 }
 
 func TestServerAndCommand(t *testing.T) {
-	cfg := &Config{Name: "test-app", Version: "1.0.0", Instructions: "test instructions"}
+	cfg := &Config{Name: "test-app", Version: "1.0.0", ServerOptions: &mcp.ServerOptions{Instructions: "test instructions"}}
 	server, cmd := ServerAndCommand(cfg)
 
 	if server == nil {

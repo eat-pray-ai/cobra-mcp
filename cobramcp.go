@@ -7,6 +7,7 @@
 package cobramcp
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -40,17 +41,6 @@ type Config struct {
 	// Version is the implementation version reported to clients.
 	Version string
 
-	// Instructions provides a brief description of the server's purpose.
-	Instructions string
-
-	// PageSize controls the pagination size for list operations.
-	// Defaults to 100 if zero.
-	PageSize int
-
-	// KeepAlive sets the interval for server keep-alive pings.
-	// Defaults to 13s if zero.
-	KeepAlive time.Duration
-
 	// Auth enables MCP OAuth authorization on the HTTP transport.
 	// When nil, no authentication is required (backward compatible).
 	Auth *AuthConfig
@@ -61,8 +51,15 @@ type Config struct {
 	// PropagateRequestCancellation can be configured here.
 	HTTPOptions *mcp.StreamableHTTPOptions
 
-	// ServerOptions allows overriding the full MCP server options.
-	// When set, Instructions, PageSize, and KeepAlive are ignored.
+	// ListCacheTTL sets the TTL hint (in milliseconds) on */list responses.
+	// Clients MAY cache these results for this duration. Use this when the
+	// server's tool/resource set is static. Zero means no caching hint.
+	ListCacheTTL int
+
+	// ServerOptions configures the MCP server. Fields like Instructions,
+	// PageSize, and KeepAlive are set here directly.
+	// PageSize defaults to 100 if zero; KeepAlive defaults to 13s unless
+	// HTTPOptions.Stateless is true (in which case it stays 0).
 	ServerOptions *mcp.ServerOptions
 }
 
@@ -104,25 +101,48 @@ func newServer(cfg *Config) *mcp.Server {
 		Version: cfg.Version,
 	}
 
-	opts := cfg.ServerOptions
-	if opts == nil {
-		pageSize := cfg.PageSize
-		if pageSize == 0 {
-			pageSize = 100
-		}
-		keepAlive := cfg.KeepAlive
-		if keepAlive == 0 {
-			keepAlive = 13 * time.Second
-		}
-
-		opts = &mcp.ServerOptions{
-			Instructions: cfg.Instructions,
-			PageSize:     pageSize,
-			KeepAlive:    keepAlive,
-		}
+	var opts mcp.ServerOptions
+	if cfg.ServerOptions != nil {
+		opts = *cfg.ServerOptions
+	}
+	if opts.PageSize == 0 {
+		opts.PageSize = 100
+	}
+	if opts.KeepAlive == 0 && !isStateless(cfg) {
+		opts.KeepAlive = 13 * time.Second
 	}
 
-	return mcp.NewServer(impl, opts)
+	server := mcp.NewServer(impl, &opts)
+	if cfg.ListCacheTTL > 0 {
+		server.AddReceivingMiddleware(listCacheTTLMiddleware(cfg.ListCacheTTL))
+	}
+	return server
+}
+
+func isStateless(cfg *Config) bool {
+	return cfg.HTTPOptions != nil && cfg.HTTPOptions.Stateless
+}
+
+func listCacheTTLMiddleware(ttl int) mcp.Middleware {
+	return func(next mcp.MethodHandler) mcp.MethodHandler {
+		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+			res, err := next(ctx, method, req)
+			if err != nil {
+				return res, err
+			}
+			switch r := res.(type) {
+			case *mcp.ListToolsResult:
+				r.TTLMs = ttl
+			case *mcp.ListPromptsResult:
+				r.TTLMs = ttl
+			case *mcp.ListResourcesResult:
+				r.TTLMs = ttl
+			case *mcp.ListResourceTemplatesResult:
+				r.TTLMs = ttl
+			}
+			return res, err
+		}
+	}
 }
 
 // buildHTTPHandler wraps the MCP streamable-HTTP handler with optional OAuth
