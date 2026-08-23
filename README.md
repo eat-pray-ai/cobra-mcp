@@ -24,6 +24,7 @@ See [`examples/main.go`](examples/main.go) for a complete working example with t
 ```go
 server, mcpCmd := cobramcp.ServerAndCommand(&cobramcp.Config{
     Name: "myapp", Version: "0.1.0",
+    ServerOptions: &mcp.ServerOptions{Instructions: "A demo CLI with MCP support"},
 })
 
 // Register a tool
@@ -66,16 +67,16 @@ myapp mcp --mode http --port 8080 --baseUrl https://mcp.example.com
 
 ### Config
 
-| Field           | Default     | Description                                          |
-|-----------------|-------------|------------------------------------------------------|
-| `Name`          | —           | Server implementation name                           |
-| `Version`       | —           | Server implementation version                        |
-| `Instructions`  | —           | Brief server description                             |
-| `PageSize`      | `100`       | Pagination size                                      |
-| `KeepAlive`     | `13s`       | Keep-alive ping interval                             |
-| `Auth`          | `nil`       | OAuth config (HTTP only)                             |
-| `HTTPOptions`   | `nil`       | Override `*mcp.StreamableHTTPOptions` (HTTP only)    |
-| `ServerOptions` | `nil`       | Override full `*mcp.ServerOptions`                   |
+| Field           | Default | Description                                                    |
+|-----------------|---------|----------------------------------------------------------------|
+| `Name`          | —       | Server implementation name                                     |
+| `Version`       | —       | Server implementation version                                  |
+| `Auth`          | `nil`   | OAuth config (HTTP only)                                       |
+| `HTTPOptions`   | `nil`   | Override `*mcp.StreamableHTTPOptions` (HTTP only)              |
+| `ListCacheTTL`  | `0`     | TTL hint (ms) on `*/list` responses; 0 = no caching            |
+| `ServerOptions` | `nil`   | `*mcp.ServerOptions` (Instructions, PageSize, KeepAlive, etc.) |
+
+`PageSize` defaults to 100 and `KeepAlive` defaults to 13s unless `HTTPOptions.Stateless` is true (no session to ping).
 
 ### ContextAware
 
