@@ -115,6 +115,288 @@ func TestGenToolHandler(t *testing.T) {
 	}
 }
 
+func TestGenToolHandlerWithMRTR(t *testing.T) {
+	errBoom := errors.New("boom")
+
+	tests := []struct {
+		name string
+		run  func(t *testing.T)
+	}{
+		{
+			name: "op returns CallToolResult for MRTR",
+			run: func(t *testing.T) {
+				handler := GenToolHandlerWithMRTR(
+					"test-tool",
+					func(ctx context.Context, req *mcp.CallToolRequest, input plainInput, w io.Writer) (*mcp.CallToolResult, error) {
+						if req.Params.InputResponses == nil {
+							return &mcp.CallToolResult{
+								InputRequests: mcp.InputRequestMap{
+									"confirm": &mcp.ElicitParams{Message: "proceed?"},
+								},
+								RequestState: "state-1",
+							}, nil
+						}
+						_, _ = io.WriteString(w, "done")
+						return nil, nil
+					},
+				)
+
+				// First call: no InputResponses → MRTR
+				result, _, err := handler(
+					context.Background(),
+					&mcp.CallToolRequest{Params: &mcp.CallToolParamsRaw{}},
+					plainInput{Name: "x"},
+				)
+				if err != nil {
+					t.Fatalf("handler returned error: %v", err)
+				}
+				if result.InputRequests == nil {
+					t.Fatal("expected InputRequests to be set")
+				}
+				if result.RequestState != "state-1" {
+					t.Errorf("RequestState = %q, want %q", result.RequestState, "state-1")
+				}
+
+				// Second call: with InputResponses → normal completion
+				result, _, err = handler(
+					context.Background(),
+					&mcp.CallToolRequest{Params: &mcp.CallToolParamsRaw{
+						InputResponses: mcp.InputResponseMap{
+							"confirm": &mcp.ElicitResult{Action: "accept"},
+						},
+					}},
+					plainInput{Name: "x"},
+				)
+				if err != nil {
+					t.Fatalf("handler returned error: %v", err)
+				}
+				text := result.Content[0].(*mcp.TextContent).Text
+				if text != "done" {
+					t.Errorf("text = %q, want %q", text, "done")
+				}
+			},
+		},
+		{
+			name: "op returns nil result uses buffer",
+			run: func(t *testing.T) {
+				handler := GenToolHandlerWithMRTR(
+					"test-tool",
+					func(ctx context.Context, req *mcp.CallToolRequest, input plainInput, w io.Writer) (*mcp.CallToolResult, error) {
+						_, _ = io.WriteString(w, "hello "+input.Name)
+						return nil, nil
+					},
+				)
+
+				result, _, err := handler(
+					context.Background(),
+					&mcp.CallToolRequest{Params: &mcp.CallToolParamsRaw{}},
+					plainInput{Name: "world"},
+				)
+				if err != nil {
+					t.Fatalf("handler returned error: %v", err)
+				}
+				text := result.Content[0].(*mcp.TextContent).Text
+				if text != "hello world" {
+					t.Errorf("text = %q, want %q", text, "hello world")
+				}
+			},
+		},
+		{
+			name: "op error is propagated",
+			run: func(t *testing.T) {
+				handler := GenToolHandlerWithMRTR(
+					"test-tool",
+					func(ctx context.Context, req *mcp.CallToolRequest, input plainInput, w io.Writer) (*mcp.CallToolResult, error) {
+						return nil, errBoom
+					},
+				)
+
+				_, _, err := handler(
+					context.Background(),
+					&mcp.CallToolRequest{Params: &mcp.CallToolParamsRaw{}},
+					plainInput{Name: "x"},
+				)
+				if !errors.Is(err, errBoom) {
+					t.Errorf("error = %v, want %v", err, errBoom)
+				}
+			},
+		},
+		{
+			name: "injects context into ContextAware input",
+			run: func(t *testing.T) {
+				handler := GenToolHandlerWithMRTR(
+					"test-tool",
+					func(ctx context.Context, req *mcp.CallToolRequest, input contextAwareInput, w io.Writer) (*mcp.CallToolResult, error) {
+						val := input.ctx.Value(ctxKey{})
+						if val == nil {
+							t.Error("expected context value to be set")
+							return nil, nil
+						}
+						if val != "injected" {
+							t.Errorf("context value = %v, want 'injected'", val)
+						}
+						return nil, nil
+					},
+				)
+
+				ctx := context.WithValue(context.Background(), ctxKey{}, "injected")
+				result, _, err := handler(
+					ctx,
+					&mcp.CallToolRequest{Params: &mcp.CallToolParamsRaw{}},
+					contextAwareInput{Name: "test"},
+				)
+				if err != nil {
+					t.Fatalf("handler returned error: %v", err)
+				}
+				if result == nil {
+					t.Fatal("expected non-nil result")
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, tt.run)
+	}
+}
+
+func TestConfirmThen(t *testing.T) {
+	tests := []struct {
+		name string
+		run  func(t *testing.T)
+	}{
+		{
+			name: "first call returns elicitation request",
+			run: func(t *testing.T) {
+				op := ConfirmThen(
+					func(input plainInput) string { return "Delete " + input.Name + "?" },
+					func(input plainInput, w io.Writer) error {
+						_, _ = io.WriteString(w, "deleted")
+						return nil
+					},
+				)
+				handler := GenToolHandlerWithMRTR("test-tool", op)
+
+				result, _, err := handler(
+					context.Background(),
+					&mcp.CallToolRequest{Params: &mcp.CallToolParamsRaw{}},
+					plainInput{Name: "foo"},
+				)
+				if err != nil {
+					t.Fatalf("handler returned error: %v", err)
+				}
+				if result.InputRequests == nil {
+					t.Fatal("expected InputRequests to be set")
+				}
+				ep, ok := result.InputRequests["confirm"].(*mcp.ElicitParams)
+				if !ok {
+					t.Fatalf("InputRequests[confirm] type = %T, want *ElicitParams", result.InputRequests["confirm"])
+				}
+				if ep.Message != "Delete foo?" {
+					t.Errorf("message = %q, want %q", ep.Message, "Delete foo?")
+				}
+				if result.RequestState != "awaiting_confirm" {
+					t.Errorf("RequestState = %q, want %q", result.RequestState, "awaiting_confirm")
+				}
+			},
+		},
+		{
+			name: "accept executes operation",
+			run: func(t *testing.T) {
+				op := ConfirmThen(
+					func(input plainInput) string { return "Confirm?" },
+					func(input plainInput, w io.Writer) error {
+						_, _ = io.WriteString(w, "deleted "+input.Name)
+						return nil
+					},
+				)
+				handler := GenToolHandlerWithMRTR("test-tool", op)
+
+				result, _, err := handler(
+					context.Background(),
+					&mcp.CallToolRequest{Params: &mcp.CallToolParamsRaw{
+						InputResponses: mcp.InputResponseMap{
+							"confirm": &mcp.ElicitResult{Action: "accept"},
+						},
+						RequestState: "awaiting_confirm",
+					}},
+					plainInput{Name: "bar"},
+				)
+				if err != nil {
+					t.Fatalf("handler returned error: %v", err)
+				}
+				text := result.Content[0].(*mcp.TextContent).Text
+				if text != "deleted bar" {
+					t.Errorf("text = %q, want %q", text, "deleted bar")
+				}
+			},
+		},
+		{
+			name: "decline returns cancellation",
+			run: func(t *testing.T) {
+				op := ConfirmThen(
+					func(input plainInput) string { return "Confirm?" },
+					func(input plainInput, w io.Writer) error {
+						t.Error("op should not be called on decline")
+						return nil
+					},
+				)
+				handler := GenToolHandlerWithMRTR("test-tool", op)
+
+				result, _, err := handler(
+					context.Background(),
+					&mcp.CallToolRequest{Params: &mcp.CallToolParamsRaw{
+						InputResponses: mcp.InputResponseMap{
+							"confirm": &mcp.ElicitResult{Action: "decline"},
+						},
+					}},
+					plainInput{Name: "baz"},
+				)
+				if err != nil {
+					t.Fatalf("handler returned error: %v", err)
+				}
+				if !result.IsError {
+					t.Error("expected IsError to be true")
+				}
+				text := result.Content[0].(*mcp.TextContent).Text
+				if text != "canceled by user" {
+					t.Errorf("text = %q, want %q", text, "canceled by user")
+				}
+			},
+		},
+		{
+			name: "op error is propagated",
+			run: func(t *testing.T) {
+				errFail := errors.New("delete failed")
+				op := ConfirmThen(
+					func(input plainInput) string { return "Confirm?" },
+					func(input plainInput, w io.Writer) error {
+						return errFail
+					},
+				)
+				handler := GenToolHandlerWithMRTR("test-tool", op)
+
+				_, _, err := handler(
+					context.Background(),
+					&mcp.CallToolRequest{Params: &mcp.CallToolParamsRaw{
+						InputResponses: mcp.InputResponseMap{
+							"confirm": &mcp.ElicitResult{Action: "accept"},
+						},
+					}},
+					plainInput{Name: "x"},
+				)
+				if !errors.Is(err, errFail) {
+					t.Errorf("error = %v, want %v", err, errFail)
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, tt.run)
+	}
+}
+
 func TestGenPromptHandler(t *testing.T) {
 	errMissing := errors.New("missing required argument: name")
 

@@ -54,6 +54,95 @@ func GenToolHandler[T any](
 	}
 }
 
+// GenToolHandlerWithMRTR creates a typed MCP tool handler that supports
+// multi round-trip requests (MRTR). Unlike GenToolHandler, the op receives
+// the full CallToolRequest so it can inspect InputResponses and return a
+// *CallToolResult directly (e.g. with InputRequests set for elicitation).
+// Return (nil, nil) from op to use the buffer content as a normal text
+// response.
+func GenToolHandlerWithMRTR[T any](
+	toolName string,
+	op func(context.Context, *mcp.CallToolRequest, T, io.Writer) (*mcp.CallToolResult, error),
+) mcp.ToolHandlerFor[T, any] {
+	return func(
+		ctx context.Context, req *mcp.CallToolRequest, input T,
+	) (*mcp.CallToolResult, any, error) {
+		if ca, ok := any(&input).(ContextAware); ok {
+			ca.SetContext(ctx)
+		}
+
+		var writer bytes.Buffer
+		result, err := op(ctx, req, input, &writer)
+
+		inputJSON, _ := json.Marshal(input)
+
+		if err != nil {
+			slog.ErrorContext(
+				ctx, err.Error(), "tool", toolName, "input", string(inputJSON),
+			)
+			return nil, nil, err
+		}
+
+		if result != nil {
+			slog.InfoContext(
+				ctx, toolName, "input", string(inputJSON), "mrtr", true,
+			)
+			return result, nil, nil
+		}
+
+		slog.InfoContext(
+			ctx, toolName,
+			"input", string(inputJSON), "output_length", writer.Len(),
+		)
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{&mcp.TextContent{Text: writer.String()}},
+		}, nil, nil
+	}
+}
+
+// ConfirmThen wraps a simple operation with a single-round confirmation
+// elicitation. On the first call (no InputResponses), it returns an
+// ElicitParams with the given message. On retry with "accept", it executes
+// the op. On "decline" or missing response, it returns a cancellation result.
+//
+// Usage:
+//
+//	GenToolHandlerWithMRTR("video-delete", ConfirmThen(msgFn, deleteFn))
+func ConfirmThen[T any](
+	msg func(T) string,
+	op func(T, io.Writer) error,
+) func(context.Context, *mcp.CallToolRequest, T, io.Writer) (*mcp.CallToolResult, error) {
+	return func(
+		_ context.Context, req *mcp.CallToolRequest, input T, w io.Writer,
+	) (*mcp.CallToolResult, error) {
+		if req.Params.InputResponses == nil {
+			return &mcp.CallToolResult{
+				InputRequests: mcp.InputRequestMap{
+					"confirm": &mcp.ElicitParams{
+						Message: msg(input),
+					},
+				},
+				RequestState: "awaiting_confirm",
+			}, nil
+		}
+
+		resp, ok := req.Params.InputResponses["confirm"].(*mcp.ElicitResult)
+		if !ok || resp.Action != "accept" {
+			return &mcp.CallToolResult{
+				Content: []mcp.Content{
+					&mcp.TextContent{Text: "canceled by user"},
+				},
+				IsError: true,
+			}, nil
+		}
+
+		if err := op(input, w); err != nil {
+			return nil, err
+		}
+		return nil, nil
+	}
+}
+
 // GenPromptHandler creates an MCP prompt handler that calls op and returns
 // the resulting messages directly.
 func GenPromptHandler(
