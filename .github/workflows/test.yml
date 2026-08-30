@@ -36,7 +36,7 @@ jobs:
       - name: Lint
         uses: golangci/golangci-lint-action@v9
         with:
-          version: v2.12
+          version: latest
       - name: Go test
         run: |
           go test $(go list ./... | grep -v /examples) -coverprofile=${{ env.COVERAGE_FILE }}

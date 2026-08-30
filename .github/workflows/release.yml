@@ -22,9 +22,9 @@ jobs:
         run: |
           PREV_TAG=$(git tag --sort=-version:refname | grep -v "^${TAG}$" | head -n1)
           if [ -n "$PREV_TAG" ]; then
-            NOTES=$(git log --pretty=format:"- %s" "${PREV_TAG}..${TAG}")
+            NOTES=$(git log --pretty=format:"- %s (@%an)" "${PREV_TAG}..${TAG}")
           else
-            NOTES=$(git log --pretty=format:"- %s" "${TAG}")
+            NOTES=$(git log --pretty=format:"- %s (@%an)" "${TAG}")
           fi
           {
             echo "body<<EOF"
