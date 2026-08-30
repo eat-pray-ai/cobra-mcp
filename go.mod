@@ -1,6 +1,6 @@
 module github.com/eat-pray-ai/cobra-mcp
 
-go 1.26.0
+go 1.27.0
 
 require (
 	github.com/google/jsonschema-go v0.4.3

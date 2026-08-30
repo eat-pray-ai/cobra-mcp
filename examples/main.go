@@ -1,7 +1,7 @@
 package main
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
 	"fmt"
 	"io"
 	"os"
@@ -29,7 +29,7 @@ var helloSchema = &jsonschema.Schema{
 	Properties: map[string]*jsonschema.Schema{
 		"name": {
 			Type: "string", Description: "Who to greet",
-			Default: json.RawMessage(`"World"`),
+			Default: jsontext.Value(`"World"`),
 		},
 	},
 }

@@ -52,7 +52,7 @@ func TestGenToolHandler(t *testing.T) {
 					},
 				)
 
-				ctx := context.WithValue(context.Background(), ctxKey{}, "injected")
+				ctx := context.WithValue(t.Context(), ctxKey{}, "injected")
 				result, _, err := handler(
 					ctx, &mcp.CallToolRequest{}, contextAwareInput{Name: "test"},
 				)
@@ -76,7 +76,7 @@ func TestGenToolHandler(t *testing.T) {
 				)
 
 				result, _, err := handler(
-					context.Background(), &mcp.CallToolRequest{}, plainInput{Name: "world"},
+					t.Context(), &mcp.CallToolRequest{}, plainInput{Name: "world"},
 				)
 				if err != nil {
 					t.Fatalf("handler returned error: %v", err)
@@ -101,7 +101,7 @@ func TestGenToolHandler(t *testing.T) {
 				)
 
 				_, _, err := handler(
-					context.Background(), &mcp.CallToolRequest{}, plainInput{Name: "x"},
+					t.Context(), &mcp.CallToolRequest{}, plainInput{Name: "x"},
 				)
 				if !errors.Is(err, errBoom) {
 					t.Errorf("error = %v, want %v", err, errBoom)
@@ -143,7 +143,7 @@ func TestGenToolHandlerWithMRTR(t *testing.T) {
 
 				// First call: no InputResponses → MRTR
 				result, _, err := handler(
-					context.Background(),
+					t.Context(),
 					&mcp.CallToolRequest{Params: &mcp.CallToolParamsRaw{}},
 					plainInput{Name: "x"},
 				)
@@ -159,7 +159,7 @@ func TestGenToolHandlerWithMRTR(t *testing.T) {
 
 				// Second call: with InputResponses → normal completion
 				result, _, err = handler(
-					context.Background(),
+					t.Context(),
 					&mcp.CallToolRequest{Params: &mcp.CallToolParamsRaw{
 						InputResponses: mcp.InputResponseMap{
 							"confirm": &mcp.ElicitResult{Action: "accept"},
@@ -188,7 +188,7 @@ func TestGenToolHandlerWithMRTR(t *testing.T) {
 				)
 
 				result, _, err := handler(
-					context.Background(),
+					t.Context(),
 					&mcp.CallToolRequest{Params: &mcp.CallToolParamsRaw{}},
 					plainInput{Name: "world"},
 				)
@@ -212,7 +212,7 @@ func TestGenToolHandlerWithMRTR(t *testing.T) {
 				)
 
 				_, _, err := handler(
-					context.Background(),
+					t.Context(),
 					&mcp.CallToolRequest{Params: &mcp.CallToolParamsRaw{}},
 					plainInput{Name: "x"},
 				)
@@ -239,7 +239,7 @@ func TestGenToolHandlerWithMRTR(t *testing.T) {
 					},
 				)
 
-				ctx := context.WithValue(context.Background(), ctxKey{}, "injected")
+				ctx := context.WithValue(t.Context(), ctxKey{}, "injected")
 				result, _, err := handler(
 					ctx,
 					&mcp.CallToolRequest{Params: &mcp.CallToolParamsRaw{}},
@@ -278,7 +278,7 @@ func TestConfirmThen(t *testing.T) {
 				handler := GenToolHandlerWithMRTR("test-tool", op)
 
 				result, _, err := handler(
-					context.Background(),
+					t.Context(),
 					&mcp.CallToolRequest{Params: &mcp.CallToolParamsRaw{}},
 					plainInput{Name: "foo"},
 				)
@@ -313,7 +313,7 @@ func TestConfirmThen(t *testing.T) {
 				handler := GenToolHandlerWithMRTR("test-tool", op)
 
 				result, _, err := handler(
-					context.Background(),
+					t.Context(),
 					&mcp.CallToolRequest{Params: &mcp.CallToolParamsRaw{
 						InputResponses: mcp.InputResponseMap{
 							"confirm": &mcp.ElicitResult{Action: "accept"},
@@ -344,7 +344,7 @@ func TestConfirmThen(t *testing.T) {
 				handler := GenToolHandlerWithMRTR("test-tool", op)
 
 				result, _, err := handler(
-					context.Background(),
+					t.Context(),
 					&mcp.CallToolRequest{Params: &mcp.CallToolParamsRaw{
 						InputResponses: mcp.InputResponseMap{
 							"confirm": &mcp.ElicitResult{Action: "decline"},
@@ -377,7 +377,7 @@ func TestConfirmThen(t *testing.T) {
 				handler := GenToolHandlerWithMRTR("test-tool", op)
 
 				_, _, err := handler(
-					context.Background(),
+					t.Context(),
 					&mcp.CallToolRequest{Params: &mcp.CallToolParamsRaw{
 						InputResponses: mcp.InputResponseMap{
 							"confirm": &mcp.ElicitResult{Action: "accept"},
@@ -476,7 +476,7 @@ func TestGenPromptHandler(t *testing.T) {
 					},
 				}
 
-				result, err := handler(context.Background(), req)
+				result, err := handler(t.Context(), req)
 
 				if tt.wantErr != nil {
 					if err == nil {
@@ -572,7 +572,7 @@ func TestGenResourceHandler(t *testing.T) {
 					Params: &mcp.ReadResourceParams{URI: tt.uri},
 				}
 
-				result, err := handler(context.Background(), req)
+				result, err := handler(t.Context(), req)
 
 				if tt.wantErr != nil {
 					if err == nil {

@@ -6,7 +6,7 @@ package cobramcp
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -287,7 +287,7 @@ func TestHTTPMode_Auth(t *testing.T) {
 			wantStatus: http.StatusOK,
 			checkBody: func(t *testing.T, rr *httptest.ResponseRecorder) {
 				var got oauthex.ProtectedResourceMetadata
-				if err := json.NewDecoder(rr.Body).Decode(&got); err != nil {
+				if err := json.UnmarshalRead(rr.Body, &got); err != nil {
 					t.Fatalf("failed to decode metadata: %v", err)
 				}
 				if got.Resource != "http://localhost:8216/mcp" {
