@@ -144,6 +144,22 @@ func TestNewCommand_Flags(t *testing.T) {
 	}
 }
 
+func TestStdioOnly(t *testing.T) {
+	cfg := &Config{Name: "test", Version: "0.1.0", StdioOnly: true}
+	server, cmd := ServerAndCommand(cfg)
+
+	if server == nil {
+		t.Fatal("expected non-nil server")
+	}
+
+	httpFlags := []string{"mode", "host", "port", "baseUrl", "stateless"}
+	for _, name := range httpFlags {
+		if cmd.Flags().Lookup(name) != nil {
+			t.Errorf("flag %q should not be registered in StdioOnly mode", name)
+		}
+	}
+}
+
 func TestResolveAuthDefaults(t *testing.T) {
 	tests := []struct {
 		name            string

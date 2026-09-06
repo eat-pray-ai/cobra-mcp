@@ -61,6 +61,11 @@ type Config struct {
 	// PageSize defaults to 100 if zero; KeepAlive defaults to 13s unless
 	// HTTPOptions.Stateless is true (in which case it stays 0).
 	ServerOptions *mcp.ServerOptions
+
+	// StdioOnly restricts the command to stdio mode. When true, no HTTP-related
+	// flags (--mode, --host, --port, --baseUrl, --stateless) are registered and
+	// the command always starts in stdio mode.
+	StdioOnly bool
 }
 
 // AuthConfig enables MCP OAuth authorization on HTTP transport.
@@ -145,17 +150,22 @@ func listCacheTTLMiddleware(ttl int) mcp.Middleware {
 	}
 }
 
-// buildHTTPHandler wraps the MCP streamable-HTTP handler with optional OAuth
-// middleware. When cfg.Auth is nil, the raw handler is returned unchanged.
+// NewHTTPHandler creates a streamable-HTTP handler for the given MCP server.
+// It wraps mcp.NewStreamableHTTPHandler without any auth middleware, so
+// callers can layer their own authentication and routing on top.
+func NewHTTPHandler(server *mcp.Server, opts *mcp.StreamableHTTPOptions) http.Handler {
+	return mcp.NewStreamableHTTPHandler(
+		func(*http.Request) *mcp.Server { return server }, opts,
+	)
+}
+
 func buildHTTPHandler(cfg *Config, server *mcp.Server, stateless bool) http.Handler {
 	var opts mcp.StreamableHTTPOptions
 	if cfg.HTTPOptions != nil {
 		opts = *cfg.HTTPOptions
 	}
 	opts.Stateless = stateless
-	handler := mcp.NewStreamableHTTPHandler(
-		func(*http.Request) *mcp.Server { return server }, &opts,
-	)
+	handler := NewHTTPHandler(server, &opts)
 	if cfg.Auth == nil {
 		return handler
 	}
@@ -189,13 +199,12 @@ func newCommand(cfg *Config, server *mcp.Server) *cobra.Command {
 		Short: mcpShort,
 		Long:  mcpLong,
 		Run: func(cmd *cobra.Command, args []string) {
+			if cfg.StdioOnly {
+				mode = "stdio"
+			}
+
 			var err error
 			ctx := cmd.Context()
-			addr := fmt.Sprintf("%s:%d", host, port)
-
-			if cfg.Auth != nil {
-				resolveAuthDefaults(cfg.Auth, baseURL, addr)
-			}
 
 			slog.InfoContext(
 				ctx, "starting MCP server",
@@ -211,6 +220,10 @@ func newCommand(cfg *Config, server *mcp.Server) *cobra.Command {
 				}
 				err = server.Run(ctx, t)
 			case "http":
+				addr := fmt.Sprintf("%s:%d", host, port)
+				if cfg.Auth != nil {
+					resolveAuthDefaults(cfg.Auth, baseURL, addr)
+				}
 				if cfg.Auth == nil {
 					slog.WarnContext(
 						ctx,
@@ -241,11 +254,13 @@ func newCommand(cfg *Config, server *mcp.Server) *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVarP(&mode, "mode", "m", "stdio", modeUsage)
-	cmd.Flags().StringVar(&host, "host", "127.0.0.1", hostUsage)
-	cmd.Flags().IntVarP(&port, "port", "p", 8216, portUsage)
-	cmd.Flags().StringVarP(&baseURL, "baseUrl", "b", "", baseURLUsage)
-	cmd.Flags().BoolVar(&stateless, "stateless", true, statelessUsage)
+	if !cfg.StdioOnly {
+		cmd.Flags().StringVarP(&mode, "mode", "m", "stdio", modeUsage)
+		cmd.Flags().StringVar(&host, "host", "127.0.0.1", hostUsage)
+		cmd.Flags().IntVarP(&port, "port", "p", 8216, portUsage)
+		cmd.Flags().StringVarP(&baseURL, "baseUrl", "b", "", baseURLUsage)
+		cmd.Flags().BoolVar(&stateless, "stateless", true, statelessUsage)
+	}
 
 	return cmd
 }
