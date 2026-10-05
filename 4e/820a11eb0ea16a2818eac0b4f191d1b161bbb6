@@ -1,0 +1,19 @@
+examples/main.go
+  h_3884c6bf11f31f 4,40
+  h_3884c6bf11f31f 117
+handler.go
+  h_3884c6bf11f31f 170,176
+handler_test.go
+  h_3884c6bf11f31f 529,538,549,559,613-637
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4e820a11eb0ea16a2818eac0b4f191d1b161bbb6",
+  "prompts": {},
+  "humans": {
+    "h_3884c6bf11f31f": {
+      "author": "OpenWaygate <27287694+OpenWaygate@users.noreply.github.com>"
+    }
+  }
+}
