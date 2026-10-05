@@ -19,15 +19,14 @@ on:
       - "**/*.go"
       - ".github/workflows/test.yml"
 
-permissions:
-  contents: write
-
 env:
   COVERAGE_FILE: ./coverage.out
 
 jobs:
   go-test:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v6
