@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json/jsontext"
 	"fmt"
 	"io"
@@ -36,13 +37,12 @@ var helloSchema = &jsonschema.Schema{
 
 // --- Resource: version ---
 
-func version(req *mcp.ReadResourceRequest, w io.Writer) error {
+func version(_ context.Context, _ *mcp.ReadResourceRequest, w io.Writer) error {
 	_, err := fmt.Fprintf(w, `{"version":"0.1.0"}`)
 	return err
 }
 
 // --- Prompt: review ---
-
 func review(req *mcp.GetPromptRequest) ([]*mcp.PromptMessage, error) {
 	code := req.Params.Arguments["code"]
 	return []*mcp.PromptMessage{
@@ -52,7 +52,6 @@ func review(req *mcp.GetPromptRequest) ([]*mcp.PromptMessage, error) {
 }
 
 // --- Wiring ---
-
 var server, mcpCmd = cobramcp.ServerAndCommand(
 	&cobramcp.Config{
 		Name:    "myapp",

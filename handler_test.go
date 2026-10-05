@@ -526,7 +526,7 @@ func TestGenResourceHandler(t *testing.T) {
 		name     string
 		resName  string
 		mimeType string
-		op       func(*mcp.ReadResourceRequest, io.Writer) error
+		op       func(context.Context, *mcp.ReadResourceRequest, io.Writer) error
 		uri      string
 		wantErr  error
 		wantText string
@@ -535,7 +535,7 @@ func TestGenResourceHandler(t *testing.T) {
 			name:     "success with JSON output",
 			resName:  "test-resource",
 			mimeType: "application/json",
-			op: func(req *mcp.ReadResourceRequest, w io.Writer) error {
+			op: func(ctx context.Context, req *mcp.ReadResourceRequest, w io.Writer) error {
 				_, _ = io.WriteString(w, `{"uri":"`+req.Params.URI+`"}`)
 				return nil
 			},
@@ -546,7 +546,7 @@ func TestGenResourceHandler(t *testing.T) {
 			name:     "op returns error",
 			resName:  "test-resource",
 			mimeType: "text/plain",
-			op: func(req *mcp.ReadResourceRequest, w io.Writer) error {
+			op: func(ctx context.Context, req *mcp.ReadResourceRequest, w io.Writer) error {
 				return errNotFound
 			},
 			uri:     "test://missing",
@@ -556,7 +556,7 @@ func TestGenResourceHandler(t *testing.T) {
 			name:     "empty output",
 			resName:  "empty-resource",
 			mimeType: "text/plain",
-			op: func(req *mcp.ReadResourceRequest, w io.Writer) error {
+			op: func(ctx context.Context, req *mcp.ReadResourceRequest, w io.Writer) error {
 				return nil
 			},
 			uri:      "test://empty",
@@ -608,5 +608,30 @@ func TestGenResourceHandler(t *testing.T) {
 				}
 			},
 		)
+	}
+}
+
+func TestGenResourceHandler_PassesContext(t *testing.T) {
+	ctx := context.WithValue(t.Context(), ctxKey{}, "injected")
+	handler := GenResourceHandler(
+		"test-resource", "text/plain",
+		func(ctx context.Context, req *mcp.ReadResourceRequest, w io.Writer) error {
+			val := ctx.Value(ctxKey{})
+			if val != "injected" {
+				t.Errorf("context value = %v, want injected", val)
+			}
+			_, _ = io.WriteString(w, "ok")
+			return nil
+		},
+	)
+
+	result, err := handler(ctx, &mcp.ReadResourceRequest{
+		Params: &mcp.ReadResourceParams{URI: "test://ctx"},
+	})
+	if err != nil {
+		t.Fatalf("handler returned error: %v", err)
+	}
+	if result.Contents[0].Text != "ok" {
+		t.Errorf("Text = %q, want ok", result.Contents[0].Text)
 	}
 }

@@ -167,13 +167,13 @@ func GenPromptHandler(
 // the written output as a JSON resource.
 func GenResourceHandler(
 	name string, mimeType string,
-	op func(*mcp.ReadResourceRequest, io.Writer) error,
+	op func(context.Context, *mcp.ReadResourceRequest, io.Writer) error,
 ) mcp.ResourceHandler {
 	return func(
 		ctx context.Context, req *mcp.ReadResourceRequest,
 	) (*mcp.ReadResourceResult, error) {
 		var writer bytes.Buffer
-		err := op(req, &writer)
+		err := op(ctx, req, &writer)
 		if err != nil {
 			slog.ErrorContext(ctx, err.Error(), "uri", req.Params.URI)
 			return nil, err
