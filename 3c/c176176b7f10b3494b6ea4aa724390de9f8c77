@@ -1,0 +1,16 @@
+go.mod
+  h_3884c6bf11f31f 3,7,17-20
+go.sum
+  h_3884c6bf11f31f 18-19,40-41,44-45,52-53,56-57
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3cc176176b7f10b3494b6ea4aa724390de9f8c77",
+  "prompts": {},
+  "humans": {
+    "h_3884c6bf11f31f": {
+      "author": "OpenWaygate <27287694+OpenWaygate@users.noreply.github.com>"
+    }
+  }
+}
