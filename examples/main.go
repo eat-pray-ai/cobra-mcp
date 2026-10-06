@@ -5,6 +5,7 @@ import (
 	"encoding/json/jsontext"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 
 	cobramcp "github.com/eat-pray-ai/cobra-mcp"
@@ -51,6 +52,23 @@ func review(req *mcp.GetPromptRequest) ([]*mcp.PromptMessage, error) {
 	}, nil
 }
 
+// --- Tool hook: audit/logging ---
+
+type toolLogger struct{}
+
+func (toolLogger) BeforeTool(ctx context.Context, toolName string, input any) error {
+	slog.InfoContext(ctx, "tool starting", "tool", toolName, "input", input)
+	return nil
+}
+
+func (toolLogger) AfterTool(ctx context.Context, toolName string, input any, err error) {
+	if err != nil {
+		slog.ErrorContext(ctx, "tool failed", "tool", toolName, "input", input, "error", err)
+		return
+	}
+	slog.InfoContext(ctx, "tool finished", "tool", toolName)
+}
+
 // --- Wiring ---
 var server, mcpCmd = cobramcp.ServerAndCommand(
 	&cobramcp.Config{
@@ -77,6 +95,7 @@ var helloCmd = &cobra.Command{
 
 func init() {
 	helloCmd.Flags().StringVarP(&name, "name", "n", "World", "Who to greet")
+	cobramcp.SetDefaultToolExecutionHook(toolLogger{})
 
 	mcp.AddTool(
 		server, &mcp.Tool{

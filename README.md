@@ -30,6 +30,9 @@ server, mcpCmd := cobramcp.ServerAndCommand(&cobramcp.Config{
 // Register a tool
 mcp.AddTool(server, &mcp.Tool{...}, cobramcp.GenToolHandler("hello", hello))
 
+// Optional: observe or block generated tool executions
+cobramcp.SetDefaultToolExecutionHook(myHook)
+
 // Register a resource
 server.AddResource(&mcp.Resource{...}, cobramcp.GenResourceHandler("version", "application/json", version))
 
@@ -58,12 +61,14 @@ myapp mcp --mode http --port 8080 --baseUrl https://mcp.example.com
 
 ## API
 
-| Function             | Signature                                                                     | Purpose                                      |
-|----------------------|-------------------------------------------------------------------------------|----------------------------------------------|
-| `ServerAndCommand`   | `(cfg *Config) (*mcp.Server, *cobra.Command)`                                 | Create MCP server + cobra command            |
-| `GenToolHandler`     | `[T any](name string, op func(T, io.Writer) error)`                           | Typed tool handler with JSON deserialization |
-| `GenResourceHandler` | `(name, mimeType string, op func(*mcp.ReadResourceRequest, io.Writer) error)` | Resource handler with MIME type              |
-| `GenPromptHandler`   | `(name string, op func(*mcp.GetPromptRequest) ([]*mcp.PromptMessage, error))` | Multi-message prompt handler                 |
+| Function                        | Signature                                                                                                  | Purpose                                               |
+|---------------------------------|------------------------------------------------------------------------------------------------------------|-------------------------------------------------------|
+| `ServerAndCommand`              | `(cfg *Config) (*mcp.Server, *cobra.Command)`                                                              | Create MCP server + cobra command                     |
+| `GenToolHandler`                | `[T any](name string, op func(T, io.Writer) error)`                                                        | Typed tool handler with JSON deserialization          |
+| `GenToolHandlerWithMRTR`        | `[T any](name string, op func(context.Context, *mcp.CallToolRequest, T, io.Writer) (*mcp.CallToolResult, error))` | Typed tool handler with multi round-trip support      |
+| `SetDefaultToolExecutionHook`   | `(hook ToolExecutionHook)`                                                                                 | Install or clear a process-wide generated-tool hook   |
+| `GenResourceHandler`            | `(name, mimeType string, op func(context.Context, *mcp.ReadResourceRequest, io.Writer) error)`             | Resource handler with MIME type                       |
+| `GenPromptHandler`              | `(name string, op func(*mcp.GetPromptRequest) ([]*mcp.PromptMessage, error))`                              | Multi-message prompt handler                          |
 
 ### Config
 
@@ -88,6 +93,43 @@ type ContextAware interface {
 }
 ```
 
+### ToolExecutionHook
+
+Generated tool handlers can be observed or blocked with a process-wide `ToolExecutionHook`:
+
+```go
+type ToolExecutionHook interface {
+    BeforeTool(ctx context.Context, toolName string, input any) error
+    AfterTool(ctx context.Context, toolName string, input any, err error)
+}
+```
+
+Install or clear the hook with:
+
+```go
+cobramcp.SetDefaultToolExecutionHook(myHook)
+cobramcp.SetDefaultToolExecutionHook(nil) // clear
+```
+
+`BeforeTool` runs after `ContextAware` injection and before the tool operation. If it returns an error, the operation is not called. `AfterTool` runs after the operation returns, including operation error cases. Existing generated handlers read the hook at execution time, so a hook can be installed after tools are registered.
+
+Example:
+
+```go
+type auditHook struct{}
+
+func (auditHook) BeforeTool(ctx context.Context, toolName string, input any) error {
+    slog.InfoContext(ctx, "tool starting", "tool", toolName, "input", input)
+    return nil
+}
+
+func (auditHook) AfterTool(ctx context.Context, toolName string, input any, err error) {
+    slog.InfoContext(ctx, "tool finished", "tool", toolName, "error", err)
+}
+
+cobramcp.SetDefaultToolExecutionHook(auditHook{})
+```
+
 ### AuthConfig
 
 When `Auth` is set, the HTTP transport requires OAuth Bearer tokens. See [examples/main.go](examples/main.go) and the `AuthConfig` godoc for details.
@@ -98,6 +140,7 @@ When `Auth` is set, the HTTP transport requires OAuth Bearer tokens. See [exampl
 - **In-process** — handlers call your Go functions directly, not via subprocess
 - **Transport included** — stdio and HTTP handled by the generated `mcp` command
 - **OAuth built-in** — optional MCP OAuth with auto-derived metadata
+- **Hookable tools** — generated tool handlers support centralized audit, policy, and rate-limit hooks
 
 ## License
 
