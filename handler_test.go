@@ -27,6 +27,24 @@ type plainInput struct {
 	Name string `json:"name"`
 }
 
+type recordingToolExecutionHook struct {
+	before func(context.Context, string, any) error
+	after  func(context.Context, string, any, error)
+}
+
+func (h recordingToolExecutionHook) BeforeTool(ctx context.Context, toolName string, input any) error {
+	if h.before == nil {
+		return nil
+	}
+	return h.before(ctx, toolName, input)
+}
+
+func (h recordingToolExecutionHook) AfterTool(ctx context.Context, toolName string, input any, err error) {
+	if h.after != nil {
+		h.after(ctx, toolName, input, err)
+	}
+}
+
 func TestGenToolHandler(t *testing.T) {
 	errBoom := errors.New("boom")
 
@@ -112,6 +130,123 @@ func TestGenToolHandler(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, tt.run)
+	}
+}
+
+func TestGenToolHandlerToolExecutionHook(t *testing.T) {
+	t.Cleanup(func() { SetDefaultToolExecutionHook(nil) })
+
+	var events []string
+	SetDefaultToolExecutionHook(recordingToolExecutionHook{
+		before: func(ctx context.Context, toolName string, input any) error {
+			events = append(events, "before")
+			if toolName != "test-tool" {
+				t.Errorf("BeforeTool toolName = %q, want %q", toolName, "test-tool")
+			}
+			got, ok := input.(contextAwareInput)
+			if !ok {
+				t.Fatalf("BeforeTool input type = %T, want contextAwareInput", input)
+			}
+			if got.ctx.Value(ctxKey{}) != "injected" {
+				t.Errorf("BeforeTool input context value = %v, want injected", got.ctx.Value(ctxKey{}))
+			}
+			return nil
+		},
+		after: func(ctx context.Context, toolName string, input any, err error) {
+			events = append(events, "after")
+			if toolName != "test-tool" {
+				t.Errorf("AfterTool toolName = %q, want %q", toolName, "test-tool")
+			}
+			if err != nil {
+				t.Errorf("AfterTool err = %v, want nil", err)
+			}
+		},
+	})
+
+	handler := GenToolHandler(
+		"test-tool",
+		func(input contextAwareInput, w io.Writer) error {
+			events = append(events, "op")
+			_, _ = io.WriteString(w, "ok")
+			return nil
+		},
+	)
+
+	ctx := context.WithValue(t.Context(), ctxKey{}, "injected")
+	result, _, err := handler(ctx, &mcp.CallToolRequest{}, contextAwareInput{Name: "x"})
+	if err != nil {
+		t.Fatalf("handler returned error: %v", err)
+	}
+	if result == nil {
+		t.Fatal("expected non-nil result")
+	}
+	want := []string{"before", "op", "after"}
+	if len(events) != len(want) {
+		t.Fatalf("events = %v, want %v", events, want)
+	}
+	for i := range want {
+		if events[i] != want[i] {
+			t.Fatalf("events = %v, want %v", events, want)
+		}
+	}
+}
+
+func TestGenToolHandlerToolExecutionHookBlocksOperation(t *testing.T) {
+	t.Cleanup(func() { SetDefaultToolExecutionHook(nil) })
+
+	errBlocked := errors.New("tool blocked")
+	opCalled := false
+	afterCalled := false
+	SetDefaultToolExecutionHook(recordingToolExecutionHook{
+		before: func(context.Context, string, any) error { return errBlocked },
+		after:  func(context.Context, string, any, error) { afterCalled = true },
+	})
+
+	handler := GenToolHandler(
+		"test-tool",
+		func(input plainInput, w io.Writer) error {
+			opCalled = true
+			return nil
+		},
+	)
+
+	_, _, err := handler(t.Context(), &mcp.CallToolRequest{}, plainInput{Name: "x"})
+	if !errors.Is(err, errBlocked) {
+		t.Fatalf("error = %v, want %v", err, errBlocked)
+	}
+	if opCalled {
+		t.Fatal("operation was called after BeforeTool error")
+	}
+	if afterCalled {
+		t.Fatal("AfterTool was called after BeforeTool error")
+	}
+}
+
+func TestGenToolHandlerToolExecutionHookObservesOperationError(t *testing.T) {
+	t.Cleanup(func() { SetDefaultToolExecutionHook(nil) })
+
+	errBoom := errors.New("boom")
+	afterCalled := false
+	SetDefaultToolExecutionHook(recordingToolExecutionHook{
+		after: func(ctx context.Context, toolName string, input any, err error) {
+			afterCalled = true
+			if !errors.Is(err, errBoom) {
+				t.Errorf("AfterTool err = %v, want %v", err, errBoom)
+			}
+		},
+	})
+
+	handler := GenToolHandler(
+		"test-tool",
+		func(input plainInput, w io.Writer) error { return errBoom },
+	)
+
+	_, _, err := handler(t.Context(), &mcp.CallToolRequest{}, plainInput{Name: "x"})
+	if !errors.Is(err, errBoom) {
+		t.Fatalf("error = %v, want %v", err, errBoom)
+	}
+	if !afterCalled {
+		t.Fatal("AfterTool was not called")
 	}
 }
 
@@ -257,6 +392,63 @@ func TestGenToolHandlerWithMRTR(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, tt.run)
+	}
+}
+
+func TestGenToolHandlerWithMRTRToolExecutionHook(t *testing.T) {
+	t.Cleanup(func() { SetDefaultToolExecutionHook(nil) })
+
+	var events []string
+	SetDefaultToolExecutionHook(recordingToolExecutionHook{
+		before: func(ctx context.Context, toolName string, input any) error {
+			events = append(events, "before")
+			if toolName != "test-tool" {
+				t.Errorf("BeforeTool toolName = %q, want %q", toolName, "test-tool")
+			}
+			got, ok := input.(plainInput)
+			if !ok {
+				t.Fatalf("BeforeTool input type = %T, want plainInput", input)
+			}
+			if got.Name != "x" {
+				t.Errorf("BeforeTool input name = %q, want %q", got.Name, "x")
+			}
+			return nil
+		},
+		after: func(ctx context.Context, toolName string, input any, err error) {
+			events = append(events, "after")
+			if err != nil {
+				t.Errorf("AfterTool err = %v, want nil", err)
+			}
+		},
+	})
+
+	handler := GenToolHandlerWithMRTR(
+		"test-tool",
+		func(ctx context.Context, req *mcp.CallToolRequest, input plainInput, w io.Writer) (*mcp.CallToolResult, error) {
+			events = append(events, "op")
+			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "ok"}}}, nil
+		},
+	)
+
+	result, _, err := handler(
+		t.Context(),
+		&mcp.CallToolRequest{Params: &mcp.CallToolParamsRaw{}},
+		plainInput{Name: "x"},
+	)
+	if err != nil {
+		t.Fatalf("handler returned error: %v", err)
+	}
+	if result == nil {
+		t.Fatal("expected non-nil result")
+	}
+	want := []string{"before", "op", "after"}
+	if len(events) != len(want) {
+		t.Fatalf("events = %v, want %v", events, want)
+	}
+	for i := range want {
+		if events[i] != want[i] {
+			t.Fatalf("events = %v, want %v", events, want)
+		}
 	}
 }
 

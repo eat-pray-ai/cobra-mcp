@@ -9,6 +9,7 @@ import (
 	"encoding/json/v2"
 	"io"
 	"log/slog"
+	"sync/atomic"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -18,6 +19,41 @@ import (
 // calls SetContext with the incoming context before invoking the operation.
 type ContextAware interface {
 	SetContext(context.Context)
+}
+
+// ToolExecutionHook observes and can block generated MCP tool handler
+// execution. BeforeTool runs after ContextAware injection and before the tool
+// operation. If BeforeTool returns an error, the operation is not called.
+// AfterTool runs after the operation returns, including operation error cases.
+type ToolExecutionHook interface {
+	BeforeTool(ctx context.Context, toolName string, input any) error
+	AfterTool(ctx context.Context, toolName string, input any, err error)
+}
+
+type toolExecutionHookHolder struct {
+	hook ToolExecutionHook
+}
+
+var defaultToolExecutionHook atomic.Pointer[toolExecutionHookHolder]
+
+// SetDefaultToolExecutionHook sets the process-wide hook used by generated
+// tool handlers. Passing nil clears the hook. Existing handlers read the hook
+// at execution time, so callers can install or replace the hook after tools are
+// registered.
+func SetDefaultToolExecutionHook(hook ToolExecutionHook) {
+	if hook == nil {
+		defaultToolExecutionHook.Store(nil)
+		return
+	}
+	defaultToolExecutionHook.Store(&toolExecutionHookHolder{hook: hook})
+}
+
+func currentToolExecutionHook() ToolExecutionHook {
+	holder := defaultToolExecutionHook.Load()
+	if holder == nil {
+		return nil
+	}
+	return holder.hook
 }
 
 // GenToolHandler creates a typed MCP tool handler that deserializes JSON input
@@ -31,9 +67,18 @@ func GenToolHandler[T any](
 		if ca, ok := any(&input).(ContextAware); ok {
 			ca.SetContext(ctx)
 		}
+		hook := currentToolExecutionHook()
+		if hook != nil {
+			if err := hook.BeforeTool(ctx, toolName, input); err != nil {
+				return nil, nil, err
+			}
+		}
 
 		var writer bytes.Buffer
 		err := op(input, &writer)
+		if hook != nil {
+			hook.AfterTool(ctx, toolName, input, err)
+		}
 
 		inputJSON, _ := json.Marshal(input)
 
@@ -70,9 +115,18 @@ func GenToolHandlerWithMRTR[T any](
 		if ca, ok := any(&input).(ContextAware); ok {
 			ca.SetContext(ctx)
 		}
+		hook := currentToolExecutionHook()
+		if hook != nil {
+			if err := hook.BeforeTool(ctx, toolName, input); err != nil {
+				return nil, nil, err
+			}
+		}
 
 		var writer bytes.Buffer
 		result, err := op(ctx, req, input, &writer)
+		if hook != nil {
+			hook.AfterTool(ctx, toolName, input, err)
+		}
 
 		inputJSON, _ := json.Marshal(input)
 
