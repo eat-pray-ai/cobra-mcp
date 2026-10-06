@@ -1,0 +1,16 @@
+README.md
+  h_3884c6bf11f31f 33-35,64-71,96-132,143
+examples/main.go
+  h_3884c6bf11f31f 8,55-71,98
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "24882892fec01ea507b54a93c37c916b8f4a78c9",
+  "prompts": {},
+  "humans": {
+    "h_3884c6bf11f31f": {
+      "author": "OpenWaygate <27287694+OpenWaygate@users.noreply.github.com>"
+    }
+  }
+}
